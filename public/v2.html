@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DocRouter V2 BYOK Learning</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./v2.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Version 2</p>
+          <h1>BYOK document routing and deterministic learning.</h1>
+        </div>
+        <nav class="top-actions" aria-label="Dashboard navigation">
+          <a href="./dashboard.html">V1 dashboard</a>
+          <button id="resetSessionBtn" type="button">Reset session</button>
+        </nav>
+      </header>
+
+      <section class="notice">
+        <strong>User-owned AI setup.</strong>
+        During onboarding, each user chooses their AI providers/models and saves their own API keys. Keys are encrypted server-side, tied to that user profile, and never displayed back.
+      </section>
+
+      <section class="workspace">
+        <aside class="rail">
+          <section class="panel">
+            <div class="panel-head">
+              <p class="panel-label">Auth</p>
+              <h2>User account</h2>
+            </div>
+            <div id="authStatus" class="micro">Demo mode until Supabase Auth is configured.</div>
+            <label>
+              Email
+              <input id="authEmail" type="email" autocomplete="email" placeholder="you@company.com" />
+            </label>
+            <label>
+              Password
+              <input id="authPassword" type="password" autocomplete="current-password" placeholder="Password" />
+            </label>
+            <div class="auth-actions">
+              <button id="signInBtn" type="button">Sign in</button>
+              <button id="signUpBtn" type="button">Sign up</button>
+              <button id="signOutBtn" type="button">Sign out</button>
+            </div>
+            <label>
+              User id
+              <input id="userId" type="text" placeholder="customer-acme" />
+            </label>
+            <p class="micro">Session: <span id="sessionId"></span></p>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <p class="panel-label">Onboarding</p>
+              <h2>Choose AIs and save keys</h2>
+            </div>
+            <div id="providerList" class="provider-list"></div>
+            <button id="savePoolBtn" type="button">Save onboarding</button>
+          </section>
+        </aside>
+
+        <section class="main-stack">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-label">Document</p>
+                <h2>Upload and describe what to extract</h2>
+              </div>
+              <button id="preflightBtn" type="button">Run preflight</button>
+            </div>
+            <label class="instruction-box">
+              What should the AI extract?
+              <textarea id="instruction" rows="5" placeholder="Example: Extract account holder, account number last four, statement period, opening balance, closing balance, every transaction row, fees, deposits, withdrawals, and reconciliation totals. Return strict JSON."></textarea>
+            </label>
+            <div class="preset-block">
+              <div class="preset-head">
+                <div>
+                  <p class="panel-label">Default extraction fields</p>
+                  <h3>Choose common fields</h3>
+                </div>
+                <button id="applyPresetsBtn" type="button">Apply presets</button>
+              </div>
+              <div class="preset-tabs" role="group" aria-label="Extraction preset type">
+                <button class="preset-tab active" type="button" data-preset-type="bank_statement">Bank statement</button>
+                <button class="preset-tab" type="button" data-preset-type="invoice">Invoice</button>
+              </div>
+              <div id="presetFields" class="preset-fields"></div>
+            </div>
+            <div class="document-grid">
+              <div class="upload-zone">
+                <input id="docFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" />
+                <p id="fileMeta">No document selected.</p>
+              </div>
+              <div class="instruction-help">
+                <strong>This text is sent into the selected AI.</strong>
+                <span>The router chooses a model first, then the extraction worker uses this instruction with the OCR text/document profile.</span>
+              </div>
+            </div>
+            <div class="profile-grid">
+              <label>
+                Document type
+                <select id="docType">
+                  <option value="invoice">Invoice</option>
+                  <option value="bank_statement">Bank statement</option>
+                  <option value="receipt">Receipt</option>
+                  <option value="tax_form">Tax form</option>
+                  <option value="contract">Contract</option>
+                  <option value="loan_document">Loan document</option>
+                  <option value="financial_report">Financial report</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Pages
+                <input id="pageCount" type="number" min="1" value="8" />
+              </label>
+              <label>
+                Characters
+                <input id="characterCount" type="number" min="0" value="12000" />
+              </label>
+              <label>
+                Source / bank
+                <input id="sourceInstitution" type="text" placeholder="Chase, Citi, vendor..." />
+              </label>
+              <label>
+                Text layer
+                <select id="textLayer">
+                  <option value="good">Good</option>
+                  <option value="partial">Partial</option>
+                  <option value="poor">Poor</option>
+                  <option value="none">None</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Image quality
+                <select id="imageQuality">
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Layout
+                <select id="layoutComplexity">
+                  <option value="simple">Simple</option>
+                  <option value="mixed">Mixed</option>
+                  <option value="table_heavy">Table-heavy</option>
+                  <option value="dense">Dense</option>
+                  <option value="multi_column">Multi-column</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Table density
+                <input id="tableDensity" type="number" min="0" max="1" step="0.05" value="0.55" />
+              </label>
+            </div>
+            <div class="toggles">
+              <label><input id="hasTables" type="checkbox" checked /> Tables</label>
+              <label><input id="hasHandwriting" type="checkbox" /> Handwriting</label>
+              <label><input id="requiresRecon" type="checkbox" checked /> Reconciliation</label>
+              <label><input id="priorFailed" type="checkbox" /> Prior failure</label>
+            </div>
+            <div id="preflightOutput" class="preflight-output"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-label">Router</p>
+                <h2>Recommend from the user's enabled models</h2>
+              </div>
+              <button id="recommendBtn" type="button">Recommend model</button>
+            </div>
+            <div class="strategy-row">
+              <label>
+                Strategy
+                <select id="strategy">
+                  <option value="balanced">Balanced</option>
+                  <option value="quality">Quality</option>
+                  <option value="cost">Cost</option>
+                  <option value="latency">Latency</option>
+                </select>
+              </label>
+              <label>
+                Max latency
+                <input id="maxLatency" type="number" min="100" step="100" value="3500" />
+              </label>
+              <label>
+                Min quality
+                <input id="minQuality" type="number" min="0" max="100" value="62" />
+              </label>
+            </div>
+            <div id="modelPool" class="model-pool"></div>
+            <div id="recommendationOutput" class="recommendation-output"></div>
+          </section>
+        </section>
+
+        <aside class="rail right-rail">
+          <section class="panel">
+            <div class="panel-head">
+              <p class="panel-label">Output</p>
+              <h2>Extracted result</h2>
+            </div>
+            <div id="selectedModel" class="selected-model">No model selected.</div>
+            <button id="simulateBtn" type="button" disabled>Run extraction</button>
+            <div id="evalOutput" class="eval-output"></div>
+            <div class="feedback-actions">
+              <button id="happyBtn" type="button" disabled>Happy</button>
+              <button id="notHappyBtn" type="button" disabled>Not happy, try next</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <p class="panel-label">Learning</p>
+              <h2>Event ledger</h2>
+            </div>
+            <div id="eventLog" class="event-log"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./v2.js"></script>
+  </body>
+</html>

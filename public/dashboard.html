@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DocRouter Cost Intelligence</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./dashboard.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Cost Intelligence Dashboard</p>
+          <h1>Live routing savings from the MCP router.</h1>
+        </div>
+        <div class="actions">
+          <a class="ghost" href="./v2.html">Open V2 BYOK learning</a>
+          <button id="seedBtn" type="button">Generate sample traffic</button>
+          <button id="refreshBtn" class="ghost" type="button">Refresh</button>
+        </div>
+      </section>
+
+      <section id="status" class="status"></section>
+
+      <section class="panel recommender">
+        <div class="section-head">
+          <div>
+            <p class="panel-label">Model recommender</p>
+            <h2>Upload a document and route it without API keys</h2>
+          </div>
+        </div>
+        <div class="recommender-grid">
+          <div class="upload-zone">
+            <input id="docFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" />
+            <p id="fileMeta">No document selected.</p>
+          </div>
+          <div class="profile-grid">
+            <label>
+              Document type
+              <select id="docType">
+                <option value="invoice">Invoice</option>
+                <option value="bank_statement">Bank statement</option>
+                <option value="receipt">Receipt</option>
+                <option value="tax_form">Tax form</option>
+                <option value="contract">Contract</option>
+                <option value="loan_document">Loan document</option>
+                <option value="financial_report">Financial report</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label>
+              Pages
+              <input id="pageCount" type="number" min="1" value="1" />
+            </label>
+            <label>
+              Characters
+              <input id="characterCount" type="number" min="0" value="0" />
+            </label>
+            <label>
+              Source / bank
+              <input id="sourceInstitution" type="text" placeholder="Bank of America, Chase, vendor..." />
+            </label>
+            <label>
+              Text layer
+              <select id="textLayer">
+                <option value="good">Good</option>
+                <option value="partial">Partial</option>
+                <option value="none">None</option>
+                <option value="poor">Poor</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label>
+              Image quality
+              <select id="imageQuality">
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label>
+              Layout
+              <select id="layoutComplexity">
+                <option value="simple">Simple</option>
+                <option value="mixed">Mixed</option>
+                <option value="table_heavy">Table-heavy</option>
+                <option value="dense">Dense</option>
+                <option value="multi_column">Multi-column</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label>
+              Table density
+              <input id="tableDensity" type="number" min="0" max="1" step="0.05" value="0.15" />
+            </label>
+          </div>
+          <div class="checks">
+            <label><input id="hasTables" type="checkbox" checked /> Has tables</label>
+            <label><input id="hasHandwriting" type="checkbox" /> Handwriting</label>
+            <label><input id="requiresRecon" type="checkbox" /> Needs reconciliation</label>
+            <label><input id="priorFailed" type="checkbox" /> Previous validation failed</label>
+          </div>
+        </div>
+        <div class="actions recommend-actions">
+          <button id="recommendBtn" type="button">Recommend model</button>
+        </div>
+        <div id="recommendationOutput" class="recommendation-output"></div>
+      </section>
+
+      <section class="kpi-grid">
+        <article class="kpi">
+          <span>Total requests</span>
+          <strong id="totalRequests">0</strong>
+        </article>
+        <article class="kpi">
+          <span>Actual routed cost</span>
+          <strong id="totalCost">$0.00</strong>
+        </article>
+        <article class="kpi">
+          <span>All-frontier baseline</span>
+          <strong id="baselineCost">$0.00</strong>
+        </article>
+        <article class="kpi savings">
+          <span>Estimated savings</span>
+          <strong id="savings">$0.00</strong>
+        </article>
+        <article class="kpi">
+          <span>Savings rate</span>
+          <strong id="savingsPct">0%</strong>
+        </article>
+        <article class="kpi">
+          <span>Eval outcomes</span>
+          <strong id="totalOutcomes">0</strong>
+        </article>
+      </section>
+
+      <section class="panels">
+        <article class="panel">
+          <div class="section-head">
+            <div>
+              <p class="panel-label">Tier distribution</p>
+              <h2>Where requests landed</h2>
+            </div>
+          </div>
+          <div id="tierBars" class="bars"></div>
+        </article>
+
+        <article class="panel">
+          <div class="section-head">
+            <div>
+              <p class="panel-label">Task mix</p>
+              <h2>Detected workload</h2>
+            </div>
+          </div>
+          <div id="taskBars" class="bars"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="panel-label">Model usage</p>
+            <h2>Most selected models</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Requests</th>
+              </tr>
+            </thead>
+            <tbody id="modelRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="panel-label">Adaptive learning</p>
+            <h2>Top learned model/task scores</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Task</th>
+                <th>Samples</th>
+                <th>Success</th>
+                <th>Learned score</th>
+              </tr>
+            </thead>
+            <tbody id="learnedRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="./dashboard.js"></script>
+  </body>
+</html>
