@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OCR Model Flow</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./flow.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OCR document analysis</p>
+          <h1>Choose models, then extract.</h1>
+        </div>
+        <button id="resetBtn" type="button" class="secondary">Reset</button>
+      </header>
+
+      <nav class="steps" aria-label="Flow steps">
+        <span class="active" id="setupStep">1. Setup</span>
+        <span id="extractStep">2. Extract</span>
+      </nav>
+
+      <section id="setupView" class="view active">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Models</p>
+              <h2>Pick the LLMs this user can use</h2>
+            </div>
+            <span id="modelCount" class="count">Loading</span>
+          </div>
+          <div id="modelGrid" class="model-grid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Extraction</p>
+              <h2>What should come out of the document?</h2>
+            </div>
+          </div>
+
+          <div class="type-row" role="group" aria-label="Document type">
+            <button class="type-tab active" type="button" data-doc-type="bank_statement">Bank statement</button>
+            <button class="type-tab" type="button" data-doc-type="invoice">Invoice</button>
+          </div>
+
+          <div id="fieldGrid" class="field-grid"></div>
+
+          <label class="instruction-box">
+            Extra instruction
+            <textarea id="instruction" rows="5" placeholder="Add anything specific, for example: include confidence per field and return transaction rows as JSON."></textarea>
+          </label>
+
+          <div class="footer-actions">
+            <p id="setupMessage" class="message"></p>
+            <button id="continueBtn" type="button">Continue</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="extractView" class="view">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Document</p>
+              <h2>Upload and run extraction</h2>
+            </div>
+            <button id="backBtn" type="button" class="secondary">Back</button>
+          </div>
+
+          <div class="upload-row">
+            <div class="upload-box">
+              <input id="docFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" />
+              <p id="fileMeta">No document selected.</p>
+            </div>
+            <div class="doc-details">
+              <label>
+                Pages
+                <input id="pageCount" type="number" min="1" value="8" />
+              </label>
+              <label>
+                Layout
+                <select id="layoutComplexity">
+                  <option value="table_heavy">Table-heavy</option>
+                  <option value="mixed">Mixed</option>
+                  <option value="dense">Dense</option>
+                  <option value="simple">Simple</option>
+                  <option value="multi_column">Multi-column</option>
+                </select>
+              </label>
+              <label>
+                Text layer
+                <select id="textLayer">
+                  <option value="partial">Partial</option>
+                  <option value="good">Good</option>
+                  <option value="poor">Poor</option>
+                  <option value="none">None</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="summary-strip">
+            <div>
+              <span>Chosen models</span>
+              <strong id="chosenModels">None</strong>
+            </div>
+            <div>
+              <span>Fields</span>
+              <strong id="chosenFields">None</strong>
+            </div>
+          </div>
+
+          <div class="footer-actions">
+            <p id="runMessage" class="message"></p>
+            <button id="runBtn" type="button">Recommend and extract</button>
+          </div>
+        </section>
+
+        <section class="results">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Router</p>
+                <h2>Model choice</h2>
+              </div>
+            </div>
+            <div id="selectedModel" class="selected-empty">No extraction yet.</div>
+            <div id="rankingList" class="ranking-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Output</p>
+                <h2>Extracted data</h2>
+              </div>
+            </div>
+            <div id="outputArea" class="output-empty">Upload a document, then run extraction.</div>
+            <div class="feedback-actions">
+              <button id="happyBtn" type="button" disabled>Looks good</button>
+              <button id="notHappyBtn" type="button" class="secondary" disabled>Not happy</button>
+              <button id="nextModelBtn" type="button" hidden></button>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+    <script src="./flow.js"></script>
+  </body>
+</html>
