@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { DocumentProfile, TaskType } from "../types.js";
 import { OcrResult, UploadedDocument } from "./ocrService.js";
 import { withSupabaseDb } from "./supabaseDb.js";
+import { runtimeDataDir } from "./runtimePaths.js";
 
 export interface DocumentIntelligenceRecord {
   id: string;
@@ -170,7 +171,7 @@ function extractFeatures(text: string, profile: DocumentProfile, file: UploadedD
 }
 
 async function writeDocumentIntelligenceLocal(record: DocumentIntelligenceRecord) {
-  const dir = process.env.V2_DOCUMENT_INTELLIGENCE_DIR || ".docrouter/v2-document-intelligence";
+  const dir = process.env.V2_DOCUMENT_INTELLIGENCE_DIR || runtimeDataDir("v2-document-intelligence");
   await fs.mkdir(dir, { recursive: true });
   await fs.appendFile(`${dir}/documents.jsonl`, `${JSON.stringify(record)}\n`);
 }

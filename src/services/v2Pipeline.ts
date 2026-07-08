@@ -13,6 +13,7 @@ import { withSupabaseDb } from "./supabaseDb.js";
 import { getEnabledModelIdsForUser } from "./userProfileStore.js";
 import { buildDocumentIntelligenceRecord, saveDocumentIntelligence } from "./documentIntelligence.js";
 import { storeUploadedDocument } from "./storageService.js";
+import { runtimeDataDir } from "./runtimePaths.js";
 
 export interface V2ExtractInput {
   sessionId: string;
@@ -320,7 +321,7 @@ async function mirrorRun(input: V2ExtractInput, response: any) {
 }
 
 export function ensureUploadDir() {
-  const uploadDir = process.env.V2_UPLOAD_DIR || path.join(process.cwd(), ".docrouter", "v2-uploads");
+  const uploadDir = process.env.V2_UPLOAD_DIR || runtimeDataDir("v2-uploads");
   fs.mkdirSync(uploadDir, { recursive: true });
   return uploadDir;
 }

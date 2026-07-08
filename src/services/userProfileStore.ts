@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { withSupabaseDb } from "./supabaseDb.js";
+import { runtimeDataDir } from "./runtimePaths.js";
 
 export interface UserModelPreference {
   modelId: string;
@@ -19,7 +20,7 @@ export interface UserOnboardingProfile {
   updatedAt: string;
 }
 
-const profileDir = process.env.V2_PROFILE_DIR || path.join(process.cwd(), ".docrouter", "v2-profiles");
+const profileDir = process.env.V2_PROFILE_DIR || runtimeDataDir("v2-profiles");
 const profilePath = path.join(profileDir, "profiles.json");
 
 export async function saveUserOnboardingProfile(input: {

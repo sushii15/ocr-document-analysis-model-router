@@ -4,8 +4,9 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { DeterministicEvalResult, DocumentProfile, TaskType, V2LearningEvent } from "../types.js";
 import { withSupabaseDb } from "./supabaseDb.js";
+import { runtimeDataDir } from "./runtimePaths.js";
 
-const eventDir = process.env.V2_EVENT_DIR || path.join(process.cwd(), ".docrouter", "v2-events");
+const eventDir = process.env.V2_EVENT_DIR || runtimeDataDir("v2-events");
 const eventPath = path.join(eventDir, "events.jsonl");
 
 export function logV2Event(event: Omit<V2LearningEvent, "id" | "timestamp">) {

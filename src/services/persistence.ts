@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { ModelTaskScore, RouterOutcome, RoutingDecision, TrajectoryState } from "../types.js";
+import { runtimeDataDir } from "./runtimePaths.js";
 
 export interface RouterStateSnapshot {
   decisions: RoutingDecision[];
@@ -28,7 +29,7 @@ export class MemoryRouterStateStore implements RouterStateStore {
 export class JsonFileRouterStateStore implements RouterStateStore {
   private readonly filePath: string;
 
-  constructor(stateDir = process.env.ROUTER_STATE_DIR || path.join(process.cwd(), ".docrouter", "router-state")) {
+  constructor(stateDir = process.env.ROUTER_STATE_DIR || runtimeDataDir("router-state")) {
     this.filePath = path.join(stateDir, "state.json");
   }
 

@@ -1,7 +1,7 @@
 import express from "express";
 import multer from "multer";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerRoutingTools } from "./tools/routingTools.js";
@@ -36,9 +36,8 @@ async function main() {
   await server.connect(new StdioServerTransport());
 }
 
-async function startHttp() {
+export function createHttpApp() {
   const app = express();
-  const port = Number(process.env.PORT || 3100);
   const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
   const upload = multer({
     dest: ensureUploadDir(),
@@ -238,6 +237,12 @@ async function startHttp() {
 
   app.delete("/mcp", (_req, res) => res.status(405).send("No stateful session to delete."));
 
+  return app;
+}
+
+async function startHttp() {
+  const app = createHttpApp();
+  const port = Number(process.env.PORT || 3100);
   app.listen(port, () => {
     console.error(`LLM Router MCP server running on http://localhost:${port}/mcp`);
     console.error(`Cost dashboard: http://localhost:${port}/dashboard.html`);
@@ -266,7 +271,11 @@ function parseJsonField<T>(value: unknown, fallback: T): T {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const isCliEntry = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isCliEntry) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

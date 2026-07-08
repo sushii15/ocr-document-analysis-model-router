@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .docrouter/
+.vercel/
 
 .env
 .env.*
@@ -19,3 +20,5 @@ coverage/
 .DS_Store
 Thumbs.db
 
+
+.vercel

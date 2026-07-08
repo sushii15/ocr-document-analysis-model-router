@@ -4,6 +4,7 @@ import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { ModelProvider } from "../types.js";
 import { withSupabaseDb } from "./supabaseDb.js";
+import { runtimeDataDir } from "./runtimePaths.js";
 
 export type CredentialProvider = ModelProvider | "self_hosted";
 
@@ -33,7 +34,7 @@ interface StoredCredential {
   updatedAt: string;
 }
 
-const credentialDir = process.env.V2_CREDENTIAL_DIR || path.join(process.cwd(), ".docrouter", "v2-credentials");
+const credentialDir = process.env.V2_CREDENTIAL_DIR || runtimeDataDir("v2-credentials");
 const credentialPath = path.join(credentialDir, "credentials.json");
 
 export async function saveProviderCredential(input: ProviderCredentialInput): Promise<ProviderCredentialSummary> {
