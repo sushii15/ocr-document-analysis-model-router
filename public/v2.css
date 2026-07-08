@@ -4,12 +4,12 @@
   --muted: oklch(0.48 0 0);
   --soft: oklch(0.68 0 0);
   --line: oklch(0.88 0 0);
-  --panel: oklch(0.995 0 0);
-  --surface: oklch(0.975 0 0);
+  --panel: oklch(0.99 0 0);
+  --surface: oklch(0.985 0 0);
   --field: oklch(1 0 0);
   --hover: oklch(0.94 0 0);
   --inverse: oklch(0.985 0 0);
-  --shadow: 0 1px 1px rgba(0, 0, 0, 0.03), 0 12px 28px rgba(0, 0, 0, 0.045);
+  --shadow: none;
 }
 
 * {
@@ -49,7 +49,6 @@ button {
 }
 
 button:hover:not(:disabled) {
-  transform: translateY(-1px);
   background: oklch(0.24 0 0);
 }
 
@@ -102,9 +101,9 @@ textarea {
 }
 
 .app-shell {
-  width: min(1560px, calc(100% - 32px));
+  width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 20px 0 36px;
+  padding: 24px 0 40px;
 }
 
 .topbar,
@@ -120,16 +119,16 @@ textarea {
 .topbar {
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 16px;
-  padding-bottom: 14px;
+  margin-bottom: 22px;
+  padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
 
 .topbar h1 {
   margin: 0;
-  max-width: 760px;
-  font-size: 32px;
-  line-height: 1.08;
+  max-width: 720px;
+  font-size: 26px;
+  line-height: 1.15;
   font-weight: 720;
   letter-spacing: 0;
 }
@@ -192,8 +191,8 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(240px, 292px) minmax(0, 1fr) minmax(260px, 332px);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.85fr);
+  gap: 16px;
   align-items: start;
 }
 
@@ -205,8 +204,8 @@ textarea {
 
 .panel {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 7px;
+  padding: 18px;
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -214,7 +213,7 @@ textarea {
 .panel-head {
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .rail .panel-head,
@@ -226,7 +225,7 @@ textarea {
 
 .panel-head h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: 0;
 }
@@ -325,18 +324,19 @@ textarea {
 
 .document-grid {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 0.62fr) minmax(0, 1fr);
   gap: 14px;
+  align-items: stretch;
 }
 
 .instruction-box {
-  margin-bottom: 14px;
+  margin-bottom: 0;
   color: var(--ink);
   font-size: 14px;
 }
 
 .instruction-box textarea {
-  min-height: 118px;
+  min-height: 138px;
   border-color: var(--ink);
   font-size: 14px;
   line-height: 1.45;
@@ -345,7 +345,7 @@ textarea {
 .preset-block {
   border: 1px solid var(--line);
   border-radius: 7px;
-  margin-bottom: 14px;
+  margin: 14px 0;
   padding: 12px;
   background: var(--field);
 }
@@ -392,7 +392,7 @@ textarea {
 .preset-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 9px;
 }
 
 .preset-chip {
@@ -402,12 +402,12 @@ textarea {
   gap: 8px;
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 7px 10px;
+  border-radius: 6px;
+  padding: 9px 10px;
   color: var(--ink);
   background: var(--panel);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 620;
 }
 
 .preset-chip span {
@@ -491,6 +491,34 @@ textarea {
   margin-top: 12px;
 }
 
+.advanced-panel {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.advanced-panel summary,
+.settings-panel summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-panel {
+  color: var(--muted);
+}
+
+.settings-panel label,
+.settings-panel .provider-list,
+.settings-panel .auth-actions,
+.settings-panel button,
+.settings-panel .micro,
+.settings-panel .event-log {
+  margin-top: 12px;
+}
+
 .toggles,
 .feedback-actions {
   flex-wrap: wrap;
@@ -547,8 +575,8 @@ textarea {
 }
 
 .model-pool {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-bottom: 14px;
+  grid-template-columns: 1fr;
+  margin: 12px 0 0;
 }
 
 .model-row {
@@ -570,7 +598,7 @@ textarea {
 
 .rank-row {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
   padding: 12px;
@@ -579,8 +607,8 @@ textarea {
 .rank {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--ink);
@@ -604,7 +632,7 @@ textarea {
 
 .metric-line span {
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 6px;
   padding: 4px 8px;
   color: var(--muted);
   background: var(--panel);
@@ -718,7 +746,7 @@ textarea {
   color: var(--muted);
   font-size: 11px;
   font-weight: 750;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .field-tile strong {
@@ -895,12 +923,11 @@ textarea {
 
 @media (max-width: 1180px) {
   .workspace {
-    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
 
   .right-rail {
     grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

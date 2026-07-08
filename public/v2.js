@@ -76,7 +76,7 @@ init().catch((error) => {
 async function init() {
   $("sessionId").textContent = state.sessionId;
   $("userId").value = localStorage.getItem("docrouter_v2_user") || "";
-  $("instruction").value = "Extract all fields, tables, totals, dates, and confidence scores needed to validate the document.";
+  $("instruction").value = "Extract the key fields, tables, totals, dates, and confidence scores needed to review this document.";
   bindEvents();
   syncDocTypeWithPreset();
   await initAuth();
@@ -84,6 +84,7 @@ async function init() {
   renderPresetFields();
   await loadModels();
   await loadOnboardingProfile();
+  applyDefaultModelPool();
   renderProviders();
   renderModelPool();
   if (new URLSearchParams(location.search).has("demo")) loadDemoScenario();
@@ -148,6 +149,12 @@ function applyPresetInstruction() {
       : "For line items, return an array with description, quantity, unit_price, amount, and confidence when visible. Also verify subtotal + tax + fees - discounts = total.",
   ].join("\n");
   $("instruction").value = instruction;
+}
+
+function applyDefaultModelPool() {
+  if (state.enabledProviders.size || state.selectedModelIds.size) return;
+  state.enabledProviders = new Set(["openai", "google", "mistral", "anthropic"]);
+  state.selectedModelIds = new Set(["gpt-4o-mini", "gemini-2.0-flash", "mistral-small-3.1", "claude-haiku-4-5"]);
 }
 
 function syncDocTypeWithPreset() {
@@ -267,7 +274,7 @@ async function initAuth() {
   if (!config.supabaseUrl || !config.supabasePublishableKey || !window.supabase) {
     $("authStatus").textContent = state.authRequired
       ? "Supabase Auth is required but not configured on this server."
-      : "Demo mode: type a user id, then save onboarding.";
+      : "Account optional. Use settings only when saving provider keys.";
     return;
   }
   state.supabase = window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey);
@@ -297,7 +304,7 @@ function applySession(session) {
 }
 
 async function signIn() {
-  if (!state.supabase) return addEvent("auth_unavailable", { message: "Supabase Auth is not configured." });
+  if (!state.supabase) return addEvent("auth_unavailable", { message: "Account sign-in is not configured." });
   const email = $("authEmail").value.trim();
   const password = $("authPassword").value;
   const { error } = await state.supabase.auth.signInWithPassword({ email, password });
@@ -305,7 +312,7 @@ async function signIn() {
 }
 
 async function signUp() {
-  if (!state.supabase) return addEvent("auth_unavailable", { message: "Supabase Auth is not configured." });
+  if (!state.supabase) return addEvent("auth_unavailable", { message: "Account sign-up is not configured." });
   const email = $("authEmail").value.trim();
   const password = $("authPassword").value;
   const { error } = await state.supabase.auth.signUp({ email, password });
@@ -397,7 +404,7 @@ async function saveModelPool() {
       }),
     });
     input.value = "";
-    input.placeholder = "Saved server-side";
+    input.placeholder = "Saved";
   }
   renderProviders();
   renderModelPool();
@@ -457,7 +464,7 @@ function updateFileMeta() {
 async function runPreflight() {
   state.documentProfile = buildDocumentProfile();
   $("preflightOutput").innerHTML = `
-    <strong>Non-LLM OCR/preflight profile</strong>
+    <strong>Document profile</strong>
     <div class="metric-line">
       <span>${state.documentProfile.file_type}</span>
       <span>${state.documentProfile.page_count} pages</span>
@@ -473,7 +480,7 @@ async function recommendModel() {
   if (!state.documentProfile) await runPreflight();
   const allowedModels = [...state.selectedModelIds].filter((id) => state.enabledProviders.has(modelById(id)?.provider));
   if (!allowedModels.length) {
-    $("recommendationOutput").innerHTML = `<div class="notice">Choose at least one model from an enabled provider.</div>`;
+    $("recommendationOutput").innerHTML = `<div class="notice">Choose at least one model in settings.</div>`;
     return;
   }
   const instruction = $("instruction").value.trim() || "Extract structured fields from this document.";
@@ -548,7 +555,7 @@ function buildExplanation(row) {
     Here: ${state.decision.estimated_input_tokens}/1000 * ${row.cost_per_1k_input_tokens}
     + ${state.decision.estimated_output_tokens}/1000 * ${row.cost_per_1k_output_tokens}
     = ${fmtUsd(row.estimated_cost_usd)}.
-    Quality score comes from catalog OCR capability, vision/structured-output support, tier, document difficulty, and task fit.
+    Quality score comes from OCR capability, document difficulty, and task fit.
     This document difficulty is ${doc.level || "unknown"} (${doc.score ?? "n/a"}) because of pages, text layer, layout, tables, handwriting, and reconciliation flags.
     Final score blends quality, cost, latency, tier bonus, and learned score using the selected strategy.
   `;
@@ -577,7 +584,7 @@ async function simulateExtraction() {
   }));
   form.append("dry_run", "false");
   $("simulateBtn").disabled = true;
-  $("evalOutput").innerHTML = `<div class="selected-model">Running OCR, routing, provider execution, and deterministic eval...</div>`;
+  $("evalOutput").innerHTML = `<div class="selected-model">Extracting document...</div>`;
   const result = await api("/api/v2/extract", { method: "POST", body: form });
   state.decision = normalizePipelineDecision(result.decision);
   state.currentRankIndex = 0;
@@ -617,7 +624,7 @@ function renderEval(extraction, evaluation, runResult = null) {
   $("evalOutput").innerHTML = `
     ${runResult ? `
       <div class="run-status">
-        <strong>${runResult.execution.dryRun ? "Dry-run fallback" : "Provider executed"}</strong>
+        <strong>${runResult.execution.dryRun ? "Demo extraction" : "Extraction complete"}</strong>
         <span>OCR: ${escapeHtml(runResult.ocr.engine)}${runResult.ocr.warnings.length ? ` | ${escapeHtml(runResult.ocr.warnings.join(" "))}` : ""}</span>
       </div>
     ` : ""}
@@ -632,7 +639,7 @@ function renderEval(extraction, evaluation, runResult = null) {
       ${extractedView.html}
     </section>
     <div class="score eval-score">
-      <strong>Deterministic eval</strong>
+      <strong>Validation</strong>
       <span>${pct(evaluation.qualityScore)} ${evaluation.validationPassed ? "passed validation" : "needs review"}</span>
       <div class="bar"><span style="width:${Math.round(evaluation.qualityScore * 100)}%"></span></div>
     </div>
