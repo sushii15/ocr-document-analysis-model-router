@@ -5,6 +5,7 @@ const providerKeys: Record<string, string | undefined> = {
   openai: process.env.OPENAI_API_KEY,
   google: process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY,
   mistral: process.env.MISTRAL_API_KEY,
+  deepseek: process.env.DEEPSEEK_API_KEY,
 };
 
 export async function executeWithProvider(
@@ -20,6 +21,7 @@ export async function executeWithProvider(
     if (model.provider === "anthropic") return await executeAnthropic(decision, request, startedAt);
     if (model.provider === "google") return await executeGemini(decision, request, startedAt);
     if (model.provider === "mistral") return await executeMistral(decision, request, startedAt);
+    if (model.provider === "deepseek" && model.hosting !== "self-hosted") return await executeDeepSeek(decision, request, startedAt);
     if (model.hosting === "self-hosted") return await executeOpenAICompatible(decision, request, startedAt);
     return dryRun(decision, request, startedAt, "provider_not_configured");
   } catch (error) {
@@ -107,6 +109,31 @@ async function executeMistral(decision: RoutingDecision, request: ExecuteRequest
     { role: "user", content: request.prompt },
   ];
   const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: decision.selectedModel.id,
+      messages,
+      temperature: request.temperature,
+      max_tokens: request.max_output_tokens,
+    }),
+  });
+  const body = await parseResponse(response);
+  return result(decision, body.choices?.[0]?.message?.content || "", Date.now() - startedAt, false, body, body.usage?.prompt_tokens, body.usage?.completion_tokens);
+}
+
+async function executeDeepSeek(decision: RoutingDecision, request: ExecuteRequest, startedAt: number) {
+  const apiKey = request.provider_credentials?.deepseek?.apiKey || providerKeys.deepseek;
+  if (!apiKey) return dryRun(decision, request, startedAt, "missing_DEEPSEEK_API_KEY");
+
+  const messages = [
+    ...(request.system_prompt ? [{ role: "system", content: request.system_prompt }] : []),
+    { role: "user", content: request.prompt },
+  ];
+  const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

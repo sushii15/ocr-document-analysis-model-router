@@ -188,6 +188,7 @@ textarea {
 }
 
 .model-grid,
+.key-grid,
 .field-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -234,6 +235,34 @@ textarea {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.key-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.key-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  background: var(--field);
+}
+
+.key-card h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.key-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.key-card.saved {
+  border-color: var(--ink);
 }
 
 .type-row {
@@ -512,6 +541,7 @@ tr:last-child td {
 
 @media (max-width: 920px) {
   .model-grid,
+  .key-grid,
   .results,
   .upload-row,
   .summary-strip {

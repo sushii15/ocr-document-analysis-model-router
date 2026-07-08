@@ -7,7 +7,7 @@ import { executeRequest } from "./executionEngine.js";
 import { runNonLlmOcr, UploadedDocument } from "./ocrService.js";
 import { evaluateExtraction, logV2Event } from "./v2Learning.js";
 import { listModels } from "./modelCatalog.js";
-import { DocumentProfile, RoutingPolicy, TaskType } from "../types.js";
+import { DocumentProfile, ExecuteRequest, RoutingPolicy, TaskType } from "../types.js";
 import { recordOutcome } from "./routingEngine.js";
 import { withSupabaseDb } from "./supabaseDb.js";
 import { getEnabledModelIdsForUser } from "./userProfileStore.js";
@@ -22,6 +22,7 @@ export interface V2ExtractInput {
   documentProfile?: DocumentProfile;
   allowedModels: string[];
   policy?: RoutingPolicy;
+  providerCredentials?: ExecuteRequest["provider_credentials"];
   dryRun?: boolean;
   file: UploadedDocument;
 }
@@ -48,11 +49,15 @@ export async function runV2Extraction(input: V2ExtractInput) {
     : userEnabledModels?.length
       ? userEnabledModels
       : listModels().map((model) => model.id);
-  const providerCredentials = buildCredentialMap(
+  const storedProviderCredentials = buildCredentialMap(
     input.sessionId,
     input.userId,
     providersForModels(allowedModels),
   );
+  const providerCredentials = {
+    ...storedProviderCredentials,
+    ...(input.providerCredentials || {}),
+  };
 
   await logV2Event({
     sessionId: input.sessionId,

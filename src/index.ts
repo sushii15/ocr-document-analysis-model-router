@@ -174,6 +174,7 @@ export function createHttpApp() {
         documentProfile: parseJsonField(body.document_profile, {}),
         allowedModels: parseJsonField(body.allowed_models, []),
         policy: parseJsonField(body.policy, {}),
+        providerCredentials: parseJsonField(body.provider_credentials, undefined),
         dryRun: body.dry_run === "true" || body.dry_run === true,
         file: {
           path: req.file.path,

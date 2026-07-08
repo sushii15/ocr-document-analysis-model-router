@@ -34,6 +34,8 @@ const state = {
   userId: localStorage.getItem("ocr_flow_user") || `browser-${crypto.randomUUID().slice(0, 8)}`,
   models: [],
   selectedModelIds: new Set(JSON.parse(localStorage.getItem("ocr_flow_models") || "[]")),
+  credentialSummaries: [],
+  liveCredentials: {},
   docType: "bank_statement",
   decision: null,
   currentRankIndex: 0,
@@ -61,8 +63,10 @@ async function init() {
   renderFields();
   $("instruction").value = "Return strict JSON. Include confidence values. Use null for missing fields.";
   await loadModels();
+  await loadCredentialSummaries();
   applyDefaultModels();
   renderModels();
+  renderKeyInputs();
   updateSummary();
 }
 
@@ -91,7 +95,7 @@ function bindEvents() {
 
 async function loadModels() {
   const result = await mcp("router_list_models");
-  state.models = (result.models || []).filter((model) => model.provider !== "deepseek");
+  state.models = result.models || [];
 }
 
 function applyDefaultModels() {
@@ -116,9 +120,121 @@ function renderModels() {
       else state.selectedModelIds.delete(input.dataset.modelId);
       localStorage.setItem("ocr_flow_models", JSON.stringify([...state.selectedModelIds]));
       $("modelCount").textContent = `${state.selectedModelIds.size} selected`;
+      renderKeyInputs();
       updateSummary();
     });
   });
+}
+
+async function loadCredentialSummaries() {
+  try {
+    const result = await api(`/api/v2/provider-credentials?session_id=${encodeURIComponent(state.sessionId)}&user_id=${encodeURIComponent(state.userId)}`);
+    state.credentialSummaries = result.credentials || [];
+  } catch {
+    state.credentialSummaries = [];
+  }
+}
+
+function renderKeyInputs() {
+  const requirements = credentialRequirements();
+  if (!requirements.length) {
+    $("keyGrid").innerHTML = `<div class="message">Choose at least one model to see the provider connection fields.</div>`;
+    return;
+  }
+  $("keyGrid").innerHTML = requirements.map((requirement) => {
+    const saved = credentialSummary(requirement.provider);
+    const isSelfHosted = requirement.provider === "self_hosted";
+    return `
+      <section class="key-card ${saved ? "saved" : ""}">
+        <div>
+          <h3>${escapeHtml(requirement.label)}</h3>
+          <small>${saved ? `Connected${saved.keyFingerprint ? ` | key ${saved.keyFingerprint}` : ""}${saved.hasBaseUrl ? " | endpoint saved" : ""}` : escapeHtml(requirement.help)}</small>
+        </div>
+        ${isSelfHosted ? `
+          <label>
+            Endpoint URL
+            <input type="url" data-base-url="${requirement.provider}" placeholder="https://your-vllm-or-ollama-gateway.com" />
+          </label>
+        ` : ""}
+        <label>
+          API key${isSelfHosted ? " (optional if local endpoint does not require one)" : ""}
+          <input type="password" autocomplete="off" data-api-key="${requirement.provider}" placeholder="${saved ? "Paste a new key to replace saved key" : "Paste API key"}" />
+        </label>
+        <button type="button" data-save-provider="${requirement.provider}">${saved ? "Update" : "Connect"}</button>
+      </section>
+    `;
+  }).join("");
+  document.querySelectorAll("[data-save-provider]").forEach((button) => {
+    button.addEventListener("click", () => saveProviderKey(button.dataset.saveProvider));
+  });
+}
+
+function credentialRequirements() {
+  const providerMap = new Map();
+  for (const model of selectedModels()) {
+    const provider = model.hosting === "self-hosted" ? "self_hosted" : model.provider;
+    providerMap.set(provider, providerRequirement(provider));
+  }
+  return [...providerMap.values()];
+}
+
+function providerRequirement(provider) {
+  const labels = {
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    google: "Google Gemini",
+    mistral: "Mistral",
+    deepseek: "DeepSeek",
+    self_hosted: "Self-hosted / OpenAI-compatible",
+  };
+  const help = {
+    openai: "Used for GPT models.",
+    anthropic: "Used for Claude models.",
+    google: "Used for Gemini models.",
+    mistral: "Used for Mistral models.",
+    deepseek: "Used for DeepSeek cloud models.",
+    self_hosted: "Used for Llama, Qwen, or self-hosted DeepSeek through an OpenAI-compatible endpoint.",
+  };
+  return { provider, label: labels[provider] || provider, help: help[provider] || "Provider key required." };
+}
+
+function credentialProviderForModel(modelId) {
+  const model = modelById(modelId);
+  if (model?.hosting === "self-hosted") return "self_hosted";
+  return model?.provider || "self_hosted";
+}
+
+function credentialSummary(provider) {
+  return state.credentialSummaries.find((item) => item.provider === provider);
+}
+
+async function saveProviderKey(provider) {
+  const keyInput = document.querySelector(`[data-api-key="${CSS.escape(provider)}"]`);
+  const baseInput = document.querySelector(`[data-base-url="${CSS.escape(provider)}"]`);
+  const apiKey = keyInput?.value.trim() || (provider === "self_hosted" ? "local" : "");
+  const baseUrl = baseInput?.value.trim() || "";
+  if (provider !== "self_hosted" && !apiKey) return setMessage("setupMessage", "Paste the provider API key first.");
+  if (provider === "self_hosted" && !baseUrl) return setMessage("setupMessage", "Paste the self-hosted endpoint URL first.");
+  await api("/api/v2/provider-credentials", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session_id: state.sessionId,
+      user_id: state.userId,
+      provider,
+      api_key: apiKey,
+      base_url: baseUrl || undefined,
+    }),
+  });
+  if (keyInput) keyInput.value = "";
+  if (baseInput) baseInput.value = "";
+  state.liveCredentials[provider] = {
+    apiKey,
+    ...(baseUrl ? { baseUrl } : {}),
+  };
+  await loadCredentialSummaries();
+  renderKeyInputs();
+  setMessage("setupMessage", `${providerRequirement(provider).label} connected.`);
 }
 
 function renderFields() {
@@ -157,12 +273,23 @@ function buildInstruction() {
 function goToExtract() {
   if (!state.selectedModelIds.size) return setMessage("setupMessage", "Choose at least one model.");
   if (!selectedFields().length) return setMessage("setupMessage", "Choose at least one extraction field.");
+  const missing = missingCredentialRequirements();
+  if (missing.length) return setMessage("setupMessage", `Connect ${missing.map((item) => item.label).join(", ")} before continuing.`);
   setMessage("setupMessage", "");
   updateSummary();
   $("setupView").classList.remove("active");
   $("extractView").classList.add("active");
   $("setupStep").classList.remove("active");
   $("extractStep").classList.add("active");
+}
+
+function missingCredentialRequirements() {
+  return credentialRequirements().filter((requirement) => {
+    const saved = credentialSummary(requirement.provider);
+    if (!saved?.hasApiKey) return true;
+    if (requirement.provider === "self_hosted" && !saved.hasBaseUrl) return true;
+    return false;
+  });
 }
 
 function goToSetup() {
@@ -239,12 +366,16 @@ async function extractWithCurrentModel() {
   form.append("document_profile", JSON.stringify(profile));
   form.append("allowed_models", JSON.stringify([row.model_id]));
   form.append("policy", JSON.stringify({ strategy: "balanced", maxLatencyMs: 3500, minQualityScore: 0 }));
+  form.append("provider_credentials", JSON.stringify(state.liveCredentials));
   form.append("dry_run", "false");
 
   setMessage("runMessage", `Extracting with ${row.name}...`);
   renderSelectedModel();
   $("outputArea").innerHTML = `<div class="output-empty">Extracting with ${escapeHtml(row.name)}...</div>`;
   const result = await api("/api/v2/extract", { method: "POST", body: form });
+  if (result.execution?.dryRun) {
+    throw new Error(`${row.name} did not execute. Check the API key or endpoint for ${providerRequirement(credentialProviderForModel(row.model_id)).label}.`);
+  }
   state.currentRun = result;
   state.currentEvaluation = result.evaluation;
   renderSelectedModel();
@@ -362,7 +493,7 @@ function renderOutput(result) {
   $("outputArea").innerHTML = `
     <div class="output-card">
       <div class="run-status">
-        <strong>${result.execution?.dryRun ? "Demo extraction" : "Extraction complete"}</strong>
+        <strong>Extraction complete</strong>
         <div>${escapeHtml(result.ocr?.engine || "OCR")} | ${pct(evaluation.qualityScore)} ${evaluation.validationPassed ? "passed" : "needs review"}</div>
       </div>
       ${view}
