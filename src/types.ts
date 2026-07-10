@@ -148,6 +148,11 @@ export interface RoutingDecision {
   alternativesConsidered: string[];
   documentProfile?: DocumentProfile;
   documentDifficulty?: DocumentDifficulty;
+  appliedWeights?: {
+    cost: number;
+    quality: number;
+    latency: number;
+  };
 }
 
 export interface TrajectoryState {

@@ -3,6 +3,7 @@ import * as z from "zod";
 import { executeRequest } from "../services/executionEngine.js";
 import { listModels } from "../services/modelCatalog.js";
 import { estimateCost, getLearnedScores, getStats, getTrajectory, recordOutcome, route } from "../services/routingEngine.js";
+import { routeV3 } from "../services/routingEngineV3.js";
 import { evaluateExtraction, logV2Event } from "../services/v2Learning.js";
 import { ModelProvider, ModelSpec, ModelTier, RoutingPolicy, TaskType } from "../types.js";
 
@@ -90,6 +91,37 @@ export function registerRoutingTools(server: McpServer) {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (params) => respond(() => formatDecision(route({
+      prompt: params.prompt,
+      task_type: params.task_type as TaskType | undefined,
+      step_type: params.step_type,
+      trajectory_id: params.trajectory_id,
+      agent_id: params.agent_id,
+      estimated_input_tokens: params.estimated_input_tokens,
+      estimated_output_tokens: params.estimated_output_tokens,
+      document_profile: params.document_profile,
+      policy: params.policy as RoutingPolicy | undefined,
+    }))),
+  );
+
+  server.registerTool(
+    "router_route_request_v3",
+    {
+      title: "Route LLM request V3",
+      description: "Experimental V3 router with Claude-reviewed scoring separation and server-returned applied weights.",
+      inputSchema: {
+        prompt: z.string().min(1).max(100000),
+        task_type: TaskTypeSchema.optional(),
+        step_type: z.string().optional(),
+        trajectory_id: z.string().optional(),
+        agent_id: z.string().optional(),
+        estimated_input_tokens: z.number().int().positive().optional(),
+        estimated_output_tokens: z.number().int().positive().optional(),
+        document_profile: DocumentProfileSchema.optional(),
+        policy: RoutingPolicySchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async (params) => respond(() => formatDecision(routeV3({
       prompt: params.prompt,
       task_type: params.task_type as TaskType | undefined,
       step_type: params.step_type,
@@ -362,6 +394,8 @@ function formatDecision(decision: ReturnType<typeof route>): Record<string, unkn
     policy_applied: decision.policyApplied,
     document_difficulty: decision.documentDifficulty,
     document_profile: decision.documentProfile || null,
+    applied_weights: decision.appliedWeights || null,
+    appliedWeights: decision.appliedWeights || null,
     recommended_models: decision.modelScores
       .filter((score) => !score.filteredReason)
       .slice(0, 20)
