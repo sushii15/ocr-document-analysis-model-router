@@ -8,6 +8,7 @@
   "routes": [
     { "src": "/", "dest": "/api/server.js" },
     { "src": "/api/v2/(.*)", "dest": "/api/server.js" },
+    { "src": "/api/v4/(.*)", "dest": "/api/server.js" },
     { "src": "/mcp", "dest": "/api/server.js" },
     { "src": "/health", "dest": "/api/server.js" },
     { "src": "/(.*)", "dest": "/public/$1" }
