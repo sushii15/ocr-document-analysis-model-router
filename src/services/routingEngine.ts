@@ -45,7 +45,7 @@ export function route(req: RouteRequest): RoutingDecision {
   const policy = normalizePolicy(req.policy);
   const trajectory = req.trajectory_id ? trajectoryStore.get(req.trajectory_id) : undefined;
   const preferredTiers = preferredTierForTask(classification.taskType, classification.complexity, trajectory);
-  const scored = scoreModels(MODEL_CATALOG, policy, inputTokens, outputTokens, preferredTiers, classification.taskType);
+  const scored = scoreModels(MODEL_CATALOG, policy, inputTokens, outputTokens, preferredTiers, classification.taskType, req.document_profile, documentDifficulty);
   const eligible = scored.filter((score) => !score.filteredReason).sort((a, b) => b.score - a.score);
 
   if (!eligible.length) {
@@ -114,6 +114,8 @@ export function scoreModels(
   outputTokens: number,
   preferredTiers: ModelTier[],
   taskType: TaskType = "unknown",
+  documentProfile?: RouteRequest["document_profile"],
+  documentDifficulty?: ReturnType<typeof evaluateDocumentDifficulty>,
 ): ModelScore[] {
   const weights = strategyWeights(policy.strategy || "balanced");
   const maxCost = Math.max(...models.map((model) => costFor(model, inputTokens, outputTokens)));
@@ -122,13 +124,14 @@ export function scoreModels(
   return models.map((model) => {
     const filteredReason = filterReason(model, policy);
     const estimatedCostUsd = costFor(model, inputTokens, outputTokens);
-    const costScore = 1 - estimatedCostUsd / maxCost;
-    const qualityScore = model.qualityScore / 100;
-    const latencyScore = 1 - model.avgLatencyMs / maxLatency;
+    const documentFit = documentFitForModel(model, taskType, documentProfile, documentDifficulty);
+    const costScore = clampScore(1 - estimatedCostUsd / maxCost + documentFit.costDelta);
+    const qualityScore = clampScore(model.qualityScore / 100 + documentFit.qualityDelta);
+    const latencyScore = clampScore(1 - model.avgLatencyMs / maxLatency + documentFit.latencyDelta);
     const tierBonus = preferredTiers.includes(model.tier) ? 0.12 - preferredTiers.indexOf(model.tier) * 0.03 : 0;
     const learned = modelTaskScoreStore.get(scoreKey(model.id, taskType));
     const learnedBlend = learned ? learnedBlendWeight(learned.sampleCount) : 0;
-    const staticScore = costScore * weights.cost + qualityScore * weights.quality + latencyScore * weights.latency + tierBonus;
+    const staticScore = costScore * weights.cost + qualityScore * weights.quality + latencyScore * weights.latency + tierBonus + documentFit.scoreDelta;
     const learnedScore = learned?.learnedScore ?? staticScore;
     const score = filteredReason
       ? -1
@@ -140,6 +143,8 @@ export function scoreModels(
       costScore,
       qualityScore,
       latencyScore,
+      documentFitScore: documentFit.scoreDelta,
+      documentFitReasons: documentFit.reasons,
       tierBonus,
       staticScore,
       learnedScore,
@@ -290,6 +295,89 @@ function strategyWeights(strategy: RoutingStrategy) {
   }[strategy];
 }
 
+function documentFitForModel(
+  model: ModelSpec,
+  taskType: TaskType,
+  profile?: RouteRequest["document_profile"],
+  difficulty?: ReturnType<typeof evaluateDocumentDifficulty>,
+) {
+  let qualityDelta = 0;
+  let latencyDelta = 0;
+  let costDelta = 0;
+  let scoreDelta = 0;
+  const reasons: string[] = [];
+  const tierRank: Record<ModelTier, number> = { nano: 0, small: 1, mid: 2, frontier: 3 };
+  const isVisionRequired = profile?.file_type === "image" || profile?.has_text_layer === false || ["none", "poor"].includes(profile?.text_layer_quality || "");
+  const hasComplexTables = Boolean(profile?.has_tables && (profile.table_density || 0) >= 0.45) || ["table_heavy", "dense", "multi_column"].includes(profile?.layout_complexity || "");
+  const isFinancial = Boolean(profile?.contains_financial_data || ["bank_statement", "invoice", "tax_form", "loan_document", "financial_report"].includes(profile?.document_type || ""));
+  const isLong = (profile?.page_count || 0) >= 15 || taskType === "long_document_extraction";
+  const isCleanSimple = profile?.text_layer_quality === "good" && profile?.image_quality === "high" && ["simple", "mixed"].includes(profile?.layout_complexity || "");
+  const modelStrength = tierRank[model.tier];
+
+  if (isVisionRequired) {
+    if (model.supportsVision) add(0.08, 0, 0, 0.02, "vision OCR required");
+    else add(-0.32, 0, 0, -0.12, "no vision support for scanned/image input");
+  }
+
+  if (hasComplexTables) {
+    if (model.supportsStructuredOutput) add(0.04, 0, 0, 0.02, "structured output helps table extraction");
+    if (modelStrength >= 2) add(0.08, -0.03, 0, 0.03, "mid/frontier model fits dense tables");
+    else add(-0.1, 0.03, 0.04, -0.04, "smaller model risk on dense tables");
+  }
+
+  if (profile?.requires_reconciliation || taskType === "reconciliation" || taskType === "bank_statement_extraction") {
+    if (modelStrength >= 2) add(0.07, -0.02, 0, 0.03, "reasoning needed for balances and reconciliation");
+    else add(-0.08, 0.02, 0.03, -0.03, "limited reconciliation headroom");
+  }
+
+  if (isFinancial && model.supportsStructuredOutput) {
+    add(0.03, 0, 0, 0.01, "financial extraction needs strict structured fields");
+  }
+
+  if (isLong) {
+    if (model.contextWindow >= 200000) add(0.06, -0.02, 0, 0.03, "large context window fits long documents");
+    else if (model.contextWindow < 128000) add(-0.08, 0, 0.01, -0.03, "context window is tighter for long documents");
+  }
+
+  if (profile?.image_quality === "low") {
+    if (model.qualityScore >= 90) add(0.06, -0.02, 0, 0.02, "high base quality offsets poor scan quality");
+    else add(-0.07, 0, 0.02, -0.03, "low image quality increases OCR risk");
+  }
+
+  if (profile?.known_layout_id || profile?.source_institution) {
+    if (modelStrength >= 2) add(0.05, -0.01, 0, 0.02, "known institution/layout profile is treated as higher precision");
+    else add(-0.04, 0.02, 0.02, -0.02, "known layout may need stronger extraction");
+  }
+
+  if (isCleanSimple) {
+    if (modelStrength <= 1) add(0.04, 0.04, 0.08, 0.03, "clean simple document favors cheaper fast models");
+    if (model.tier === "frontier") add(0, -0.02, -0.05, -0.03, "frontier model may be overkill for clean simple text");
+  }
+
+  if (difficulty?.complexity === "high" && modelStrength < 2) {
+    add(-0.08, 0.02, 0.03, -0.04, "high difficulty penalizes small models");
+  }
+  if (difficulty?.complexity === "low" && modelStrength >= 2) {
+    add(0, -0.01, -0.04, -0.02, "low difficulty reduces need for stronger model");
+  }
+
+  return {
+    qualityDelta,
+    latencyDelta,
+    costDelta,
+    scoreDelta,
+    reasons: reasons.slice(0, 5),
+  };
+
+  function add(q: number, l: number, c: number, s: number, reason: string) {
+    qualityDelta += q;
+    latencyDelta += l;
+    costDelta += c;
+    scoreDelta += s;
+    if (!reasons.includes(reason)) reasons.push(reason);
+  }
+}
+
 function upsertTrajectory(trajectoryId: string, decision: RoutingDecision, agentId: string | undefined, stepType: string) {
   const existing = trajectoryStore.get(trajectoryId);
   if (!existing) {
@@ -397,6 +485,10 @@ function rollingAverage(currentAverage: number, nextValue: number, sampleCount: 
 
 function clamp01(value?: number) {
   if (value === undefined) return undefined;
+  return Math.min(1, Math.max(0, value));
+}
+
+function clampScore(value: number) {
   return Math.min(1, Math.max(0, value));
 }
 

@@ -117,6 +117,8 @@ export interface ModelScore {
   costScore: number;
   qualityScore: number;
   latencyScore: number;
+  documentFitScore?: number;
+  documentFitReasons?: string[];
   tierBonus?: number;
   staticScore?: number;
   learnedScore?: number;

@@ -259,6 +259,138 @@ select:focus {
   gap: 10px;
 }
 
+.tradeoff-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.42fr) minmax(320px, 1fr);
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--field);
+}
+
+.tradeoff-copy h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.tradeoff-copy p {
+  max-width: 42ch;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tradeoff-chart {
+  position: relative;
+  min-height: 210px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px),
+    var(--panel);
+  background-size: 25% 25%;
+}
+
+.tradeoff-chart::before,
+.tradeoff-chart::after {
+  content: "";
+  position: absolute;
+  background: var(--ink);
+}
+
+.tradeoff-chart::before {
+  left: 8%;
+  bottom: 10%;
+  width: 84%;
+  height: 1px;
+}
+
+.tradeoff-chart::after {
+  left: 8%;
+  bottom: 10%;
+  width: 1px;
+  height: 80%;
+}
+
+.axis-label {
+  position: absolute;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.axis-label.y {
+  left: 12px;
+  top: 10px;
+}
+
+.axis-label.x {
+  right: 12px;
+  bottom: 8px;
+}
+
+.chart-dot {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  padding: 0;
+  color: var(--ink);
+  background: var(--field);
+  transform: translate(-50%, 50%);
+}
+
+.chart-dot.selected {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  color: var(--inverse);
+  background: var(--ink);
+}
+
+.chart-dot span {
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.chart-legend {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chart-legend i {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: var(--panel);
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 780;
+}
+
 .rank-card {
   padding: 14px;
 }
@@ -429,7 +561,8 @@ select:focus {
   .controls-grid,
   .details-grid,
   .summary-panel,
-  .score-grid {
+  .score-grid,
+  .tradeoff-panel {
     display: grid;
     grid-template-columns: 1fr;
   }

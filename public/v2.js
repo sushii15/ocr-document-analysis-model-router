@@ -109,7 +109,7 @@ function bindEvents() {
   });
   $("extractionPreset").addEventListener("change", updateSummary);
   $("strategy").addEventListener("change", updateSummary);
-  ["pageCount", "textLayer", "imageQuality", "layoutComplexity"].forEach((id) => {
+  ["pageCount", "textLayer", "imageQuality", "layoutComplexity", "institutionProfile", "tableDensity"].forEach((id) => {
     $(id).addEventListener("change", updateSummary);
   });
   $("recommendBtn").addEventListener("click", recommendModels);
@@ -159,6 +159,7 @@ function applyDocumentDefaults() {
   $("layoutComplexity").value = tableHeavy ? "table_heavy" : "mixed";
   $("pageCount").value = docType === "financial_report" ? 18 : docType === "receipt" ? 1 : 8;
   $("textLayer").value = docType === "receipt" ? "none" : "partial";
+  $("tableDensity").value = "auto";
 }
 
 function applyDemoProfile() {
@@ -169,6 +170,8 @@ function applyDemoProfile() {
   $("textLayer").value = "partial";
   $("imageQuality").value = "medium";
   $("layoutComplexity").value = "table_heavy";
+  $("institutionProfile").value = "chase.statement.v1";
+  $("tableDensity").value = "high";
   $("fileMeta").textContent = "sample-bank-statement.pdf | demo document";
   updateSummary();
 }
@@ -206,7 +209,9 @@ async function recommendModels() {
 
 function renderRecommendations() {
   const rows = normalizeDecisionRows().slice(0, 5);
-  $("recommendationOutput").innerHTML = rows.map((row, index) => `
+  $("recommendationOutput").innerHTML = `
+    ${renderTradeoffChart(rows)}
+    ${rows.map((row, index) => `
     <article class="rank-card">
       <div class="rank-top">
         <span class="rank-number">${index + 1}</span>
@@ -227,7 +232,8 @@ function renderRecommendations() {
         ${buildExplanation(row, index, rows)}
       </div>
     </article>
-  `).join("");
+  `).join("")}
+  `;
 
   document.querySelectorAll("[data-explain]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -252,6 +258,8 @@ function normalizeDecisionRows() {
       estimated_cost_usd: row.estimatedCostUsd,
       quality_score: row.qualityScore,
       latency_score: row.latencyScore,
+      document_fit_score: row.documentFitScore,
+      document_fit_reasons: row.documentFitReasons,
       cost_score: row.costScore,
       cost_per_1k_input_tokens: model.cost_per_1k_input_tokens,
       cost_per_1k_output_tokens: model.cost_per_1k_output_tokens,
@@ -287,7 +295,8 @@ function buildExplanation(row, index, rows) {
   const weightedQuality = row.quality_score * weights.quality;
   const weightedCost = row.cost_score * weights.cost;
   const weightedLatency = row.latency_score * weights.latency;
-  const baseScore = weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0);
+  const documentFitScore = row.document_fit_score || row.documentFitScore || 0;
+  const baseScore = weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0) + documentFitScore;
   const leader = rows[0];
   const costDelta = leader && leader !== row ? row.estimated_cost_usd - leader.estimated_cost_usd : 0;
   const qualityDelta = leader && leader !== row ? row.quality_score - leader.quality_score : 0;
@@ -322,9 +331,42 @@ function buildExplanation(row, index, rows) {
         ${scoreRow("Cost", row.cost_score, weights.cost, weightedCost)}
         ${scoreRow("Speed", row.latency_score, weights.latency, weightedLatency)}
       </div>
-      <p class="formula">Base score = ${weightedQuality.toFixed(3)} + ${weightedCost.toFixed(3)} + ${weightedLatency.toFixed(3)}${(row.tierBonus || row.tier_bonus) ? ` + ${(row.tierBonus || row.tier_bonus).toFixed(3)} tier bonus` : ""} = ${baseScore.toFixed(3)}</p>
+      <p class="formula">Base score = ${weightedQuality.toFixed(3)} + ${weightedCost.toFixed(3)} + ${weightedLatency.toFixed(3)}${(row.tierBonus || row.tier_bonus) ? ` + ${(row.tierBonus || row.tier_bonus).toFixed(3)} tier bonus` : ""}${documentFitScore ? ` + ${documentFitScore.toFixed(3)} document fit` : ""} = ${baseScore.toFixed(3)}</p>
       <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the weighted score is lower after cost and speed are included.` : ""}</p>
     </div>
+  `;
+}
+
+function renderTradeoffChart(rows) {
+  if (!rows.length) return "";
+  const maxCost = Math.max(...rows.map((row) => Number(row.estimated_cost_usd || 0)), 0.000001);
+  const minQuality = Math.min(...rows.map((row) => Number(row.quality_score || 0)), 0.55);
+  const qualityRange = Math.max(0.01, 1 - minQuality);
+  const dots = rows.map((row, index) => {
+    const x = 8 + (Number(row.estimated_cost_usd || 0) / maxCost) * 84;
+    const y = 10 + ((Number(row.quality_score || 0) - minQuality) / qualityRange) * 80;
+    return `
+      <button type="button" class="chart-dot ${index === 0 ? "selected" : ""}" style="left:${x}%; bottom:${y}%;" aria-label="${escapeHtml(row.name)} cost ${money(row.estimated_cost_usd)}, quality ${percent(row.quality_score)}">
+        <span>${index + 1}</span>
+      </button>
+    `;
+  }).join("");
+
+  return `
+    <section class="tradeoff-panel" aria-label="Cost and accuracy trade-off chart">
+      <div class="tradeoff-copy">
+        <h3>Cost vs accuracy trade-off</h3>
+        <p>The highlighted dot is the current top recommendation. Moving right means higher estimated cost; moving up means higher OCR quality fit.</p>
+      </div>
+      <div class="tradeoff-chart">
+        <span class="axis-label y">Accuracy</span>
+        <span class="axis-label x">Cost</span>
+        ${dots}
+      </div>
+      <div class="chart-legend">
+        ${rows.map((row, index) => `<span><i>${index + 1}</i>${escapeHtml(row.name)}</span>`).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -380,7 +422,9 @@ function contextAwareWhy(row, index, leader, profile, preset) {
 function reasonBullets(row, index, profile) {
   const bullets = [];
   const strongest = strongestMetric(row);
+  const fitReasons = row.document_fit_reasons || row.documentFitReasons || [];
   bullets.push(`Strongest dimension: ${strongest.label} at ${percent(strongest.value)}.`);
+  fitReasons.slice(0, 2).forEach((reason) => bullets.push(`Rule match: ${reason}.`));
   if (profile.has_tables) bullets.push(`Table signal is active, so quality is weighted heavily for row and total accuracy.`);
   if (profile.requires_reconciliation) bullets.push("Reconciliation is required, so models with stronger reasoning/structure handling move up.");
   if (profile.text_layer_quality === "good") bullets.push("Good text layer reduces OCR risk, so cheaper models can remain competitive.");
@@ -423,24 +467,53 @@ function buildDocumentProfile() {
   const pageCount = Number($("pageCount").value || 1);
   const layout = $("layoutComplexity").value;
   const hasTables = ["bank_statement", "invoice", "financial_report"].includes(docType) || layout === "table_heavy";
+  const institutionProfile = $("institutionProfile").value;
+  const density = tableDensityValue(hasTables, pageCount);
   return {
     file_type: file?.name?.toLowerCase().endsWith(".pdf") ? "pdf" : file ? "image" : "unknown",
     page_count: pageCount,
-    character_count: Math.max(1200, pageCount * 1500),
+    character_count: Math.max(1200, pageCount * characterDensityFor(layout, $("textLayer").value)),
     has_text_layer: ["good", "partial"].includes($("textLayer").value),
     text_layer_quality: $("textLayer").value,
     document_type: docType,
+    source_institution: institutionProfile ? institutionProfile.split(".")[0].replace(/-/g, " ") : undefined,
+    known_layout_id: institutionProfile || undefined,
     image_quality: $("imageQuality").value,
     layout_complexity: layout,
     has_tables: hasTables,
-    table_count: hasTables ? Math.max(1, Math.round(pageCount * 2.5)) : 0,
-    table_density: hasTables ? 0.55 : 0.15,
+    table_count: hasTables ? Math.max(1, Math.round(pageCount * (density >= 0.6 ? 3.2 : density >= 0.3 ? 2.2 : 1.2))) : 0,
+    table_density: density,
     has_handwriting: false,
     requires_reconciliation: docType === "bank_statement",
     contains_financial_data: ["invoice", "bank_statement", "receipt", "tax_form", "loan_document", "financial_report"].includes(docType),
     prior_validation_failed: false,
     confidence: file ? 0.78 : 0.64,
   };
+}
+
+function tableDensityValue(hasTables, pageCount) {
+  const selected = $("tableDensity").value;
+  if (selected === "low") return 0.18;
+  if (selected === "medium") return 0.42;
+  if (selected === "high") return 0.72;
+  if (!hasTables) return 0.08;
+  if ($("layoutComplexity").value === "dense") return 0.68;
+  if ($("layoutComplexity").value === "table_heavy") return pageCount > 8 ? 0.65 : 0.55;
+  return 0.28;
+}
+
+function characterDensityFor(layout, textLayer) {
+  const base = {
+    simple: 950,
+    mixed: 1400,
+    table_heavy: 1850,
+    dense: 2400,
+    multi_column: 2100,
+    unknown: 1500,
+  }[layout] || 1500;
+  if (textLayer === "none") return Math.round(base * 0.75);
+  if (textLayer === "good") return Math.round(base * 1.15);
+  return base;
 }
 
 function buildInstruction() {
