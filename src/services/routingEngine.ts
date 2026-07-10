@@ -137,7 +137,7 @@ export function scoreModels(
     const documentFit = documentFitForModel(model, taskType, documentProfile, documentDifficulty);
     const rawCostScore = costScoreFor(estimatedCostUsd, minCost, maxCost);
     const costScore = rawCostScore;
-    const qualityScore = clampScore(model.qualityScore / 100 + documentFit.qualityDelta);
+    const qualityScore = qualityScoreFor(model.qualityScore, documentFit.qualityDelta);
     const latencyScore = clampScore(1 - model.avgLatencyMs / maxLatency + documentFit.latencyDelta);
     const tierBonus = preferredTiers.includes(model.tier) ? 0.12 - preferredTiers.indexOf(model.tier) * 0.03 : 0;
     const learned = modelTaskScoreStore.get(scoreKey(model.id, taskType));
@@ -176,6 +176,12 @@ function costScoreFor(cost: number, minCost: number, maxCost: number) {
   const safeMin = Math.max(minCost, 0.0000001);
   const safeMax = Math.max(maxCost, safeMin + 0.0000001);
   return clampScore(1 - Math.log(safeCost / safeMin) / Math.log(safeMax / safeMin));
+}
+
+function qualityScoreFor(catalogQuality: number, qualityDelta: number) {
+  const calibratedBase = 0.35 + (catalogQuality / 100) * 0.55;
+  const cappedDelta = Math.max(-0.16, Math.min(0.12, qualityDelta));
+  return clampScore(calibratedBase + cappedDelta);
 }
 
 function costFirstScore(costScore: number, qualityScore: number, latencyScore: number, documentFitScore: number) {

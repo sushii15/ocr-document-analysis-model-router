@@ -260,7 +260,6 @@ function renderRecommendations() {
           <h3>${escapeHtml(row.name)}</h3>
           <p>${escapeHtml(recommendationSentence(row, index))}</p>
         </div>
-        <button type="button" class="secondary" data-explain="${index}">Explain</button>
       </div>
       <div class="score-grid">
         ${metricTile("Estimated cost", money(row.estimated_cost_usd), null)}
@@ -269,20 +268,12 @@ function renderRecommendations() {
         ${metricTile("Cost fit", percent(row.cost_score), row.cost_score)}
       </div>
       ${riskNote(row)}
-      <div id="explain-${index}" class="explain-card" hidden>
+      <div id="explain-${index}" class="explain-card">
         ${buildExplanation(row, index, rows)}
       </div>
     </article>
   `).join("")}
   `;
-
-  document.querySelectorAll("[data-explain]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const target = $(`explain-${button.dataset.explain}`);
-      target.hidden = !target.hidden;
-      button.textContent = target.hidden ? "Explain" : "Hide";
-    });
-  });
 }
 
 function normalizeDecisionRows() {

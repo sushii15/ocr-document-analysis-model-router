@@ -397,7 +397,7 @@ select:focus {
 
 .rank-top {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 34px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -569,10 +569,5 @@ select:focus {
 
   .rank-top {
     grid-template-columns: 34px minmax(0, 1fr);
-  }
-
-  .rank-top button {
-    grid-column: 2;
-    width: max-content;
   }
 }
