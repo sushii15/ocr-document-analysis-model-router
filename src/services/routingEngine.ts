@@ -136,7 +136,7 @@ export function scoreModels(
     const estimatedCostUsd = costFor(model, inputTokens, outputTokens);
     const documentFit = documentFitForModel(model, taskType, documentProfile, documentDifficulty);
     const rawCostScore = costScoreFor(estimatedCostUsd, minCost, maxCost);
-    const costScore = policy.strategy === "cost" ? rawCostScore : clampScore(rawCostScore + documentFit.costDelta);
+    const costScore = rawCostScore;
     const qualityScore = clampScore(model.qualityScore / 100 + documentFit.qualityDelta);
     const latencyScore = clampScore(1 - model.avgLatencyMs / maxLatency + documentFit.latencyDelta);
     const tierBonus = preferredTiers.includes(model.tier) ? 0.12 - preferredTiers.indexOf(model.tier) * 0.03 : 0;

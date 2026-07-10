@@ -72,7 +72,11 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const money = (value) => `$${Number(value || 0).toFixed(value > 0.01 ? 4 : 6)}`;
-const percent = (value) => `${Math.min(99, Math.max(1, Math.round(Number(value || 0) * 100)))}%`;
+const percent = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "1%";
+  return `${Math.min(99, Math.max(1, Math.round(numeric * 100)))}%`;
+};
 
 init().catch((error) => {
   console.error(error);
@@ -364,7 +368,7 @@ function buildExplanation(row, index, rows) {
     </div>
     <div class="explain-section">
       <h4>Cost estimate</h4>
-      <p>Estimated cost is calculated from token volume and the model's listed input/output prices. No AI is used for this explanation.</p>
+      <p>Estimated cost is calculated from token volume and the model's listed input/output prices. Cost fit is based only on relative price within this model list.</p>
       <p class="formula">${inputTokens} / 1000 x ${money(inputPrice)} + ${outputTokens} / 1000 x ${money(outputPrice)} = ${money(row.estimated_cost_usd)}</p>
       ${costDelta > 0 ? `<p>${escapeHtml(row.name)} is ${money(costDelta)} more expensive than the current top recommendation for this request.</p>` : ""}
     </div>
