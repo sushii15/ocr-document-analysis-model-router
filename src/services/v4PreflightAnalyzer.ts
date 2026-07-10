@@ -23,6 +23,18 @@ export interface V4PreflightResult {
   };
 }
 
+interface V4FileFeatures {
+  fileType: DocumentProfile["file_type"];
+  fileSizeBucket: string;
+  pageCount?: number;
+  pdfImageObjectCount?: number;
+  pdfLargeImageCount?: number;
+  pdfFullPageImageCount?: number;
+  pdfMaxImagePixels?: number;
+  pdfImageFilters?: string[];
+  pdfLooksScanned?: boolean;
+}
+
 export async function analyzeDocumentPreflightV4(file: UploadedDocument, hints: {
   documentType?: string;
   extractionPreset?: string;
@@ -34,9 +46,10 @@ export async function analyzeDocumentPreflightV4(file: UploadedDocument, hints: 
   const inferredDocumentType = normalizeDocumentType(hints.documentType) || inferDocumentType(file.originalName, text);
   const institution = inferInstitution(file.originalName, text);
   const pageCount = ocr.profilePatch.page_count || fileFeatures.pageCount || 1;
-  const tableDensity = estimateTableDensity(textFeatures, inferredDocumentType);
-  const layoutComplexity = inferLayoutComplexity(textFeatures, tableDensity, pageCount);
-  const imageQuality = inferImageQuality(file, ocr.profilePatch.image_quality, textFeatures, pageCount);
+  const imageOnlyPdf = Boolean(fileFeatures.pdfLooksScanned && text.length < 80);
+  const tableDensity = estimateTableDensity(textFeatures, inferredDocumentType, imageOnlyPdf);
+  const layoutComplexity = inferLayoutComplexity(textFeatures, tableDensity, pageCount, imageOnlyPdf);
+  const imageQuality = inferImageQuality(file, ocr.profilePatch.image_quality, textFeatures, pageCount, fileFeatures);
   const hasTables = tableDensity >= 0.22 || ["bank_statement", "invoice", "financial_report"].includes(inferredDocumentType);
   const textLayerQuality = ocr.profilePatch.text_layer_quality || inferTextLayerQuality(text.length, pageCount, ocr.engine);
   const profile: DocumentProfile = {
@@ -57,10 +70,11 @@ export async function analyzeDocumentPreflightV4(file: UploadedDocument, hints: 
     requires_reconciliation: inferredDocumentType === "bank_statement" || /\breconcile|running balance|opening balance|closing balance\b/i.test(text),
     contains_financial_data: containsFinancialData(inferredDocumentType, textFeatures),
     prior_validation_failed: false,
-    confidence: confidenceFor(text, ocr.engine, hints.documentType),
+    confidence: confidenceFor(text, ocr.engine, hints.documentType, imageOnlyPdf),
   };
 
-  const signals = buildSignals(profile, textFeatures, fileFeatures, ocr.warnings);
+  const warnings = enhanceWarnings(ocr.warnings, imageOnlyPdf);
+  const signals = buildSignals(profile, textFeatures, fileFeatures, warnings);
   return {
     profile,
     features: {
@@ -74,7 +88,7 @@ export async function analyzeDocumentPreflightV4(file: UploadedDocument, hints: 
       word_count: textFeatures.wordCount,
       line_count: textFeatures.lineCount,
       preview: text.slice(0, 1200),
-      warnings: ocr.warnings,
+      warnings,
     },
     signals,
     file: {
@@ -91,18 +105,57 @@ async function hashFile(filePath: string) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-async function extractFileFeatures(file: UploadedDocument) {
+async function extractFileFeatures(file: UploadedDocument): Promise<V4FileFeatures> {
   const lower = file.originalName.toLowerCase();
   const fileType = file.mimeType === "application/pdf" || lower.endsWith(".pdf")
     ? "pdf"
     : file.mimeType.startsWith("image/") || /\.(png|jpe?g|tiff?|bmp|webp)$/i.test(lower)
       ? "image"
       : "unknown";
+  const pdfVisual = fileType === "pdf" ? await extractPdfVisualFeatures(file.path) : {};
   return {
     fileType: fileType as DocumentProfile["file_type"],
     fileSizeBucket: bucket(file.size, [150_000, 1_500_000, 8_000_000]),
     pageCount: fileType === "image" ? 1 : undefined,
+    ...pdfVisual,
   };
+}
+
+async function extractPdfVisualFeatures(filePath: string) {
+  const raw = (await fs.readFile(filePath)).toString("latin1");
+  const imageObjects = extractPdfImageDictionaries(raw);
+  const imageSizes = imageObjects.map((chunk) => ({
+    width: Number(chunk.match(/\/Width\s+(\d+)/)?.[1] || 0),
+    height: Number(chunk.match(/\/Height\s+(\d+)/)?.[1] || 0),
+    bits: Number(chunk.match(/\/BitsPerComponent\s+(\d+)/)?.[1] || 0),
+    filter: chunk.match(/\/Filter\s*\/?([A-Za-z0-9]+)/)?.[1] || "unknown",
+  })).filter((image) => image.width > 0 && image.height > 0);
+  const pageCount = Number(raw.match(/\/Count\s+(\d+)/)?.[1] || 0) || undefined;
+  const maxPixels = imageSizes.reduce((max, image) => Math.max(max, image.width * image.height), 0);
+  const largeImageCount = imageSizes.filter((image) => image.width >= 1000 && image.height >= 1000).length;
+  const fullPageImageCount = imageSizes.filter((image) => image.width >= 1200 && image.height >= 1600).length;
+  return {
+    pdfImageObjectCount: imageSizes.length,
+    pdfLargeImageCount: largeImageCount,
+    pdfFullPageImageCount: fullPageImageCount,
+    pdfMaxImagePixels: maxPixels,
+    pdfImageFilters: Array.from(new Set(imageSizes.map((image) => image.filter))).filter(Boolean),
+    pdfLooksScanned: fullPageImageCount >= Math.max(1, pageCount || 1) || (largeImageCount >= Math.max(1, pageCount || 1) && maxPixels > 1_500_000),
+    pageCount,
+  };
+}
+
+function extractPdfImageDictionaries(raw: string) {
+  const chunks: string[] = [];
+  const imageRegex = /\/Subtype\s*\/Image/g;
+  let match: RegExpExecArray | null;
+  while ((match = imageRegex.exec(raw))) {
+    const start = match.index;
+    const streamStart = raw.indexOf("stream", start);
+    if (streamStart === -1) continue;
+    chunks.push(raw.slice(start, Math.min(streamStart, start + 2400)));
+  }
+  return chunks;
 }
 
 function extractTextFeatures(text: string) {
@@ -163,14 +216,18 @@ function inferInstitution(fileName: string, text: string) {
   return match ? { name: match[1], layoutId: match[2] } : undefined;
 }
 
-function estimateTableDensity(features: ReturnType<typeof extractTextFeatures>, documentType: DocumentType) {
+function estimateTableDensity(features: ReturnType<typeof extractTextFeatures>, documentType: DocumentType, imageOnlyPdf = false) {
+  if (imageOnlyPdf && documentType === "bank_statement") return 0.58;
+  if (imageOnlyPdf && ["invoice", "financial_report"].includes(documentType)) return 0.48;
   const base = Math.max(features.tableSignal, features.hasDenseNumbers ? 0.26 : 0.08);
   const financialBoost = ["bank_statement", "invoice", "financial_report"].includes(documentType) ? 0.14 : 0;
   const density = base + financialBoost + Math.min(0.18, features.tableLikeLineCount / 120);
   return round4(Math.min(0.88, Math.max(0.04, density)));
 }
 
-function inferLayoutComplexity(features: ReturnType<typeof extractTextFeatures>, tableDensity: number, pageCount: number): DocumentProfile["layout_complexity"] {
+function inferLayoutComplexity(features: ReturnType<typeof extractTextFeatures>, tableDensity: number, pageCount: number, imageOnlyPdf = false): DocumentProfile["layout_complexity"] {
+  if (imageOnlyPdf && tableDensity >= 0.45) return "table_heavy";
+  if (imageOnlyPdf) return "mixed";
   if (tableDensity >= 0.6) return "table_heavy";
   if (features.longLineRatio > 0.25 || pageCount >= 20) return "dense";
   if (features.tableSignal >= 0.3) return "table_heavy";
@@ -179,7 +236,19 @@ function inferLayoutComplexity(features: ReturnType<typeof extractTextFeatures>,
   return "mixed";
 }
 
-function inferImageQuality(file: UploadedDocument, patchQuality: DocumentProfile["image_quality"], features: ReturnType<typeof extractTextFeatures>, pageCount: number): DocumentProfile["image_quality"] {
+function inferImageQuality(
+  file: UploadedDocument,
+  patchQuality: DocumentProfile["image_quality"],
+  features: ReturnType<typeof extractTextFeatures>,
+  pageCount: number,
+  fileFeatures: Awaited<ReturnType<typeof extractFileFeatures>>,
+): DocumentProfile["image_quality"] {
+  if (fileFeatures.pdfLooksScanned) {
+    const maxPixels = Number(fileFeatures.pdfMaxImagePixels || 0);
+    if (maxPixels >= 6_000_000) return "high";
+    if (maxPixels >= 1_500_000) return "medium";
+    return "low";
+  }
   if (patchQuality && patchQuality !== "unknown") return patchQuality;
   const charsPerPage = features.wordCount * 5 / Math.max(1, pageCount);
   if (file.mimeType.startsWith("image/") && charsPerPage < 120) return "low";
@@ -213,11 +282,18 @@ function containsFinancialData(documentType: DocumentType, features: ReturnType<
     || features.digitRatio > 0.12;
 }
 
-function confidenceFor(text: string, engine: string, hintedType?: string) {
+function confidenceFor(text: string, engine: string, hintedType?: string, imageOnlyPdf = false) {
   let confidence = text.length > 500 ? 0.84 : text.length > 80 ? 0.72 : 0.52;
   if (engine === "pdf_text_layer") confidence += 0.08;
   if (hintedType && hintedType !== "unknown") confidence += 0.04;
+  if (imageOnlyPdf) confidence += 0.1;
   return round4(Math.min(0.95, confidence));
+}
+
+function enhanceWarnings(warnings: string[], imageOnlyPdf: boolean) {
+  if (!imageOnlyPdf) return warnings;
+  const visualWarning = "PDF appears to be image-only with full-page embedded scans; text OCR is unavailable in this runtime, so V4 used visual PDF structure plus document-type rules.";
+  return Array.from(new Set([visualWarning, ...warnings]));
 }
 
 function buildSignals(profile: DocumentProfile, features: ReturnType<typeof extractTextFeatures>, fileFeatures: Awaited<ReturnType<typeof extractFileFeatures>>, warnings: string[]) {
@@ -231,6 +307,10 @@ function buildSignals(profile: DocumentProfile, features: ReturnType<typeof extr
     `digit ratio: ${Math.round(features.digitRatio * 100)}%`,
     `file size bucket: ${fileFeatures.fileSizeBucket}`,
   ];
+  if (fileFeatures.pdfLooksScanned) signals.push("visual structure: image-only scanned PDF");
+  if (fileFeatures.pdfImageObjectCount) signals.push(`embedded PDF images: ${fileFeatures.pdfImageObjectCount}`);
+  if (fileFeatures.pdfFullPageImageCount) signals.push(`full-page image layers: ${fileFeatures.pdfFullPageImageCount}`);
+  if (fileFeatures.pdfMaxImagePixels) signals.push(`largest embedded image: ${Math.round(Number(fileFeatures.pdfMaxImagePixels) / 1_000_000)}MP`);
   if (profile.known_layout_id) signals.push(`known layout: ${profile.known_layout_id}`);
   if (profile.requires_reconciliation) signals.push("requires reconciliation");
   warnings.forEach((warning) => signals.push(`warning: ${warning}`));

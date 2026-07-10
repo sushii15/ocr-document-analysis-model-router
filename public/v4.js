@@ -300,6 +300,7 @@ function renderAnalysis() {
     return;
   }
   const profile = state.analysis.profile || {};
+  const features = state.analysis.features || {};
   const ocr = state.analysis.ocr || {};
   $("analysisPanel").hidden = false;
   $("analysisOutput").innerHTML = `
@@ -309,6 +310,7 @@ function renderAnalysis() {
       ${analysisTile("Text layer", profile.text_layer_quality || "unknown")}
       ${analysisTile("Layout", labelForLayout(profile.layout_complexity || "unknown"))}
       ${analysisTile("Tables", `${profile.has_tables ? "Detected" : "Not detected"} (${Math.round((profile.table_density || 0) * 100)}%)`)}
+      ${analysisTile("Visual structure", features.pdfLooksScanned ? "Image-only scan" : "Text/vector PDF")}
       ${analysisTile("OCR engine", ocr.engine || "none")}
       ${analysisTile("Characters read", ocr.character_count || 0)}
       ${analysisTile("Document type", labelForDocType(profile.document_type || "unknown"))}
@@ -319,13 +321,20 @@ function renderAnalysis() {
     </div>
     <details class="ocr-preview">
       <summary>OCR/text preview</summary>
-      <pre>${escapeHtml(ocr.preview || "No text preview available. V4 still routes from file metadata, OCR warnings, and detected sparse-document signals.")}</pre>
+      <pre>${escapeHtml(ocr.preview || previewFallbackText(features))}</pre>
     </details>
   `;
 }
 
 function analysisTile(label, value) {
   return `<div class="analysis-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`;
+}
+
+function previewFallbackText(features) {
+  if (features?.pdfLooksScanned) {
+    return "No embedded text was available because this PDF appears to be made of full-page scanned images. V4 routed from visual PDF structure: image count, full-page image layers, image resolution, document type, page count, and financial-document rules.";
+  }
+  return "No text preview available. V4 still routes from file metadata, OCR warnings, and detected sparse-document signals.";
 }
 
 function renderRecommendations() {
