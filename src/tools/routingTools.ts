@@ -387,6 +387,7 @@ function formatDecision(decision: ReturnType<typeof route>): Record<string, unkn
           quality_score: Math.round(score.qualityScore * 10000) / 10000,
           latency_score: Math.round(score.latencyScore * 10000) / 10000,
           document_fit_score: Math.round((score.documentFitScore || 0) * 10000) / 10000,
+          raw_document_fit_score: Math.round((score.rawDocumentFitScore || 0) * 10000) / 10000,
           document_fit_reasons: score.documentFitReasons || [],
           tier_bonus: Math.round((score.tierBonus || 0) * 10000) / 10000,
         };

@@ -296,6 +296,7 @@ function normalizeDecisionRows() {
       quality_score: row.qualityScore,
       latency_score: row.latencyScore,
       document_fit_score: row.documentFitScore,
+      raw_document_fit_score: row.rawDocumentFitScore,
       document_fit_reasons: row.documentFitReasons,
       cost_score: row.costScore,
       cost_per_1k_input_tokens: model.cost_per_1k_input_tokens,
@@ -314,7 +315,8 @@ function recommendationSentence(row, index) {
     if (strategy === "latency") return "Ranked first because it is the fastest strong-enough option for the selected extraction.";
     return "Ranked first because it has the best weighted score across quality, speed, cost, and document difficulty.";
   }
-  if (strongest.key === "quality") return "Higher-accuracy fallback for messy scans, dense tables, or cases where precision matters more than cost.";
+  if (strongest.key === "quality" && Number(row.quality_score || 0) < 0.995) return "Higher-accuracy fallback for messy scans, dense tables, or cases where precision matters more than cost.";
+  if (Number(row.quality_score || 0) >= 0.995) return "Strong fallback with high quality, but lower total score after speed, cost, and capped document fit are included.";
   if (strongest.key === "cost") return "Lower-cost alternative for clean documents where the text layer and layout are unlikely to cause extraction errors.";
   if (strongest.key === "latency") return "Faster fallback when turnaround time matters and the document is not unusually complex.";
   return "Backup option with a reasonable overall score if the models above are unavailable.";
@@ -333,8 +335,9 @@ function buildExplanation(row, index, rows) {
   const weightedCost = row.cost_score * weights.cost;
   const weightedLatency = row.latency_score * weights.latency;
   const documentFitScore = row.document_fit_score || row.documentFitScore || 0;
+  const rawDocumentFitScore = row.raw_document_fit_score || row.rawDocumentFitScore || documentFitScore;
   const isCostGoal = $("strategy").value === "cost";
-  const safetyAdjustment = Math.max(-0.04, Math.min(0.03, documentFitScore));
+  const safetyAdjustment = documentFitScore;
   const baseScore = isCostGoal
     ? row.cost_score * 0.82 + row.quality_score * 0.12 + row.latency_score * 0.06 + safetyAdjustment
     : weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0) + documentFitScore;
@@ -372,7 +375,7 @@ function buildExplanation(row, index, rows) {
         ${isCostGoal ? scoreRow("Quality safety", row.quality_score, 0.12, row.quality_score * 0.12) : scoreRow("Cost", row.cost_score, weights.cost, weightedCost)}
         ${isCostGoal ? scoreRow("Speed", row.latency_score, 0.06, row.latency_score * 0.06) : scoreRow("Speed", row.latency_score, weights.latency, weightedLatency)}
       </div>
-      <p class="formula">${scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, documentFitScore, safetyAdjustment, baseScore)}</p>
+      <p class="formula">${scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, documentFitScore, rawDocumentFitScore, safetyAdjustment, baseScore)}</p>
       <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the weighted score is lower after cost and speed are included.` : ""}</p>
     </div>
   `;
@@ -383,11 +386,12 @@ function scoreIntroText(isCostGoal, weights) {
   return `The ${$("strategy").selectedOptions[0]?.textContent || "Balanced"} goal weights quality ${percent(weights.quality)}, cost ${percent(weights.cost)}, and speed ${percent(weights.latency)}.`;
 }
 
-function scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, documentFitScore, safetyAdjustment, baseScore) {
+function scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, documentFitScore, rawDocumentFitScore, safetyAdjustment, baseScore) {
+  const cappedText = Math.abs(rawDocumentFitScore - documentFitScore) > 0.0001 ? ` (raw ${rawDocumentFitScore.toFixed(3)} capped)` : "";
   if (isCostGoal) {
-    return `Cost-first score = ${(row.cost_score * 0.82).toFixed(3)} + ${(row.quality_score * 0.12).toFixed(3)} + ${(row.latency_score * 0.06).toFixed(3)}${safetyAdjustment ? ` + ${safetyAdjustment.toFixed(3)} capped safety` : ""} = ${baseScore.toFixed(3)}`;
+    return `Cost-first score = ${(row.cost_score * 0.82).toFixed(3)} + ${(row.quality_score * 0.12).toFixed(3)} + ${(row.latency_score * 0.06).toFixed(3)}${safetyAdjustment ? ` + ${safetyAdjustment.toFixed(3)} document safety${cappedText}` : ""} = ${baseScore.toFixed(3)}`;
   }
-  return `Base score = ${weightedQuality.toFixed(3)} + ${weightedCost.toFixed(3)} + ${weightedLatency.toFixed(3)}${(row.tierBonus || row.tier_bonus) ? ` + ${(row.tierBonus || row.tier_bonus).toFixed(3)} tier bonus` : ""}${documentFitScore ? ` + ${documentFitScore.toFixed(3)} document fit` : ""} = ${baseScore.toFixed(3)}`;
+  return `Base score = ${weightedQuality.toFixed(3)} + ${weightedCost.toFixed(3)} + ${weightedLatency.toFixed(3)}${(row.tierBonus || row.tier_bonus) ? ` + ${(row.tierBonus || row.tier_bonus).toFixed(3)} tier bonus` : ""}${documentFitScore ? ` + ${documentFitScore.toFixed(3)} document fit${cappedText}` : ""} = ${baseScore.toFixed(3)}`;
 }
 
 function renderTradeoffChart(rows) {
@@ -460,8 +464,11 @@ function contextAwareWhy(row, index, leader, profile, preset) {
   if (index === 0) {
     return `${rankText} because its weighted score is the strongest fit for ${documentNeed}: ${percent(row.quality_score)} quality, ${percent(row.latency_score)} speed, and ${percent(row.cost_score)} cost fit for "${preset.label}".`;
   }
-  if (strongest.key === "quality") {
+  if (strongest.key === "quality" && Number(row.quality_score || 0) < 0.995) {
     return `${rankText} because it improves accuracy headroom for harder OCR, but its total score falls behind ${leader?.name || "the top model"} after cost and speed are weighted.`;
+  }
+  if (Number(row.quality_score || 0) >= 0.995 && Number(leader?.quality_score || 0) >= 0.995) {
+    return `${rankText} because quality is tied with ${leader?.name || "the top model"}, but its total score is lower after speed, cost, tier bonus, and capped document fit are included.`;
   }
   if (strongest.key === "cost") {
     return `${rankText} because it is economically efficient, but it is safer for clean layouts than for complex financial tables.`;

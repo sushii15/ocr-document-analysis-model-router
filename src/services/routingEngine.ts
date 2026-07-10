@@ -46,7 +46,7 @@ export function route(req: RouteRequest): RoutingDecision {
   const trajectory = req.trajectory_id ? trajectoryStore.get(req.trajectory_id) : undefined;
   const preferredTiers = preferredTierForTask(classification.taskType, classification.complexity, trajectory);
   const scored = scoreModels(MODEL_CATALOG, policy, inputTokens, outputTokens, preferredTiers, classification.taskType, req.document_profile, documentDifficulty);
-  const eligible = scored.filter((score) => !score.filteredReason).sort((a, b) => b.score - a.score);
+  const eligible = scored.filter((score) => !score.filteredReason).sort((a, b) => compareScores(a, b, policy.strategy || "balanced"));
 
   if (!eligible.length) {
     throw new Error("No eligible model found for this request. Relax policy filters or inspect router_list_models.");
@@ -67,7 +67,7 @@ export function route(req: RouteRequest): RoutingDecision {
     selectedModel,
     fallbackModel,
     policyApplied: policy,
-    modelScores: scored.sort((a, b) => b.score - a.score),
+    modelScores: scored.sort((a, b) => compareScores(a, b, policy.strategy || "balanced")),
     estimatedInputTokens: inputTokens,
     estimatedOutputTokens: outputTokens,
     estimatedCostUsd: roundMoney(selectedScore.estimatedCostUsd),
@@ -84,6 +84,14 @@ export function route(req: RouteRequest): RoutingDecision {
   pushDecision(decision);
   persistState();
   return decision;
+}
+
+function compareScores(a: ModelScore, b: ModelScore, strategy: RoutingStrategy) {
+  const scoreDelta = b.score - a.score;
+  if (Math.abs(scoreDelta) > 0.01) return scoreDelta;
+  if (strategy === "quality") return b.qualityScore - a.qualityScore || a.estimatedCostUsd - b.estimatedCostUsd;
+  if (strategy === "latency") return b.latencyScore - a.latencyScore || a.estimatedCostUsd - b.estimatedCostUsd;
+  return a.estimatedCostUsd - b.estimatedCostUsd || b.qualityScore - a.qualityScore || b.latencyScore - a.latencyScore;
 }
 
 export function classifyTask(prompt: string, stepType?: string, documentDifficulty = evaluateDocumentDifficulty(prompt, undefined, undefined, stepType)): { taskType: TaskType; confidence: number; complexity: "low" | "medium" | "high" } {
@@ -134,9 +142,10 @@ export function scoreModels(
     const tierBonus = preferredTiers.includes(model.tier) ? 0.12 - preferredTiers.indexOf(model.tier) * 0.03 : 0;
     const learned = modelTaskScoreStore.get(scoreKey(model.id, taskType));
     const learnedBlend = learned ? learnedBlendWeight(learned.sampleCount) : 0;
+    const documentFitScore = cappedDocumentFit(policy.strategy || "balanced", documentFit.scoreDelta);
     const staticScore = policy.strategy === "cost"
-      ? costFirstScore(costScore, qualityScore, latencyScore, documentFit.scoreDelta)
-      : costScore * weights.cost + qualityScore * weights.quality + latencyScore * weights.latency + tierBonus + documentFit.scoreDelta;
+      ? costFirstScore(costScore, qualityScore, latencyScore, documentFitScore)
+      : costScore * weights.cost + qualityScore * weights.quality + latencyScore * weights.latency + tierBonus + documentFitScore;
     const learnedScore = learned?.learnedScore ?? staticScore;
     const score = filteredReason
       ? -1
@@ -148,7 +157,8 @@ export function scoreModels(
       costScore,
       qualityScore,
       latencyScore,
-      documentFitScore: documentFit.scoreDelta,
+      documentFitScore,
+      rawDocumentFitScore: documentFit.scoreDelta,
       documentFitReasons: documentFit.reasons,
       tierBonus,
       staticScore,
@@ -169,8 +179,18 @@ function costScoreFor(cost: number, minCost: number, maxCost: number) {
 }
 
 function costFirstScore(costScore: number, qualityScore: number, latencyScore: number, documentFitScore: number) {
-  const safetyAdjustment = Math.max(-0.04, Math.min(0.03, documentFitScore));
-  return costScore * 0.82 + qualityScore * 0.12 + latencyScore * 0.06 + safetyAdjustment;
+  return costScore * 0.82 + qualityScore * 0.12 + latencyScore * 0.06 + documentFitScore;
+}
+
+function cappedDocumentFit(strategy: RoutingStrategy, rawScore: number) {
+  const caps: Record<RoutingStrategy, { min: number; max: number }> = {
+    cost: { min: -0.04, max: 0.03 },
+    latency: { min: -0.08, max: 0.08 },
+    balanced: { min: -0.14, max: 0.14 },
+    quality: { min: -0.18, max: 0.18 },
+  };
+  const cap = caps[strategy] || caps.balanced;
+  return Math.max(cap.min, Math.min(cap.max, rawScore));
 }
 
 export function estimateCost(prompt: string, estimatedOutputTokens = 300) {
