@@ -342,13 +342,14 @@ function buildExplanation(row, index, rows) {
     ? row.cost_score * 0.82 + row.quality_score * 0.12 + row.latency_score * 0.06 + safetyAdjustment
     : weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0) + documentFitScore;
   const leader = rows[0];
+  const tieWinner = rows.some((candidate) => candidate !== row && Number(candidate.score || 0) > Number(row.score || 0) && Number(candidate.score || 0) - Number(row.score || 0) <= 0.01 && Number(row.estimated_cost_usd || Infinity) < Number(candidate.estimated_cost_usd || Infinity));
   const costDelta = leader && leader !== row ? row.estimated_cost_usd - leader.estimated_cost_usd : 0;
   const qualityDelta = leader && leader !== row ? row.quality_score - leader.quality_score : 0;
 
   return `
     <div class="explain-section">
       <h4>Why this model</h4>
-      <p>${escapeHtml(contextAwareWhy(row, index, leader, profile, preset))}</p>
+      <p>${escapeHtml(contextAwareWhy(row, index, leader, profile, preset, rows))}</p>
       <ul class="reason-list">
         ${reasonBullets(row, index, profile).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
       </ul>
@@ -376,7 +377,7 @@ function buildExplanation(row, index, rows) {
         ${isCostGoal ? scoreRow("Speed", row.latency_score, 0.06, row.latency_score * 0.06) : scoreRow("Speed", row.latency_score, weights.latency, weightedLatency)}
       </div>
       <p class="formula">${scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, documentFitScore, rawDocumentFitScore, safetyAdjustment, baseScore)}</p>
-      <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the weighted score is lower after cost and speed are included.` : ""}</p>
+      <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${tieWinner ? " Scores within 0.01 are treated as a tie; the cheaper model wins the tie-break." : ""}${qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the weighted score is lower after cost and speed are included.` : ""}</p>
     </div>
   `;
 }
@@ -454,14 +455,18 @@ function riskReasons(row, profile) {
   return risks;
 }
 
-function contextAwareWhy(row, index, leader, profile, preset) {
+function contextAwareWhy(row, index, leader, profile, preset, rows = []) {
   const strongest = strongestMetric(row);
   const rankText = index === 0 ? "It is ranked first" : `It is ranked #${index + 1}`;
   const documentNeed = profile.has_tables
     ? `${labelForDocType(profile.document_type).toLowerCase()} with table extraction`
     : `${labelForDocType(profile.document_type).toLowerCase()} field extraction`;
+  const nearTieHigherScore = rows.find((candidate) => candidate !== row && Number(candidate.score || 0) > Number(row.score || 0) && Number(candidate.score || 0) - Number(row.score || 0) <= 0.01);
 
   if (index === 0) {
+    if (nearTieHigherScore && Number(row.estimated_cost_usd || Infinity) < Number(nearTieHigherScore.estimated_cost_usd || Infinity)) {
+      return `${rankText} because it is within the 0.01 near-tie band of ${nearTieHigherScore.name || "the next model"} and has the lower estimated cost for ${documentNeed}.`;
+    }
     return `${rankText} because its weighted score is the strongest fit for ${documentNeed}: ${percent(row.quality_score)} quality, ${percent(row.latency_score)} speed, and ${percent(row.cost_score)} cost fit for "${preset.label}".`;
   }
   if (strongest.key === "quality" && Number(row.quality_score || 0) < 0.995) {
