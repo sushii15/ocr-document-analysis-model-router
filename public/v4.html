@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OCR Model Recommender V4</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./v4.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OCR model routing V4</p>
+          <h1>Upload a document. Analyze it. Route it.</h1>
+        </div>
+        <button id="resetBtn" type="button" class="secondary">Reset</button>
+      </header>
+
+      <section class="workspace">
+        <section class="panel setup-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-label">Input</p>
+              <h2>Upload the document</h2>
+            </div>
+            <button id="recommendBtn" type="button">Analyze and recommend</button>
+          </div>
+
+          <div class="input-grid">
+            <div class="upload-zone">
+              <input id="docFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" />
+              <p id="fileMeta">No document selected.</p>
+            </div>
+
+            <div class="controls-grid">
+              <label>
+                Document type
+                <select id="docType">
+                  <option value="bank_statement">Bank statement</option>
+                  <option value="invoice">Invoice</option>
+                  <option value="receipt">Receipt</option>
+                  <option value="tax_form">Tax form</option>
+                  <option value="loan_document">Loan document</option>
+                  <option value="financial_report">Financial report</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+
+              <label>
+                Extraction preset
+                <select id="extractionPreset"></select>
+              </label>
+
+              <label>
+                Routing goal
+                <select id="strategy">
+                  <option value="balanced">Balanced</option>
+                  <option value="quality">Best quality</option>
+                  <option value="cost">Lowest cost</option>
+                  <option value="latency">Fastest</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <details class="advanced-panel">
+            <summary>Manual overrides</summary>
+            <div class="details-grid">
+              <label>
+                Pages
+                <input id="pageCount" type="number" min="1" value="8" />
+              </label>
+              <label>
+                Text layer
+                <select id="textLayer">
+                  <option value="partial">Partial</option>
+                  <option value="good">Good</option>
+                  <option value="poor">Poor</option>
+                  <option value="none">None</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Image quality
+                <select id="imageQuality">
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="low">Low</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Layout
+                <select id="layoutComplexity">
+                  <option value="table_heavy">Table-heavy</option>
+                  <option value="mixed">Mixed</option>
+                  <option value="dense">Dense</option>
+                  <option value="simple">Simple</option>
+                  <option value="multi_column">Multi-column</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Institution / layout
+                <select id="institutionProfile">
+                  <option value="">Generic / unknown</option>
+                  <option value="chase.statement.v1">Chase statement</option>
+                  <option value="bank-of-america.statement.v1">Bank of America statement</option>
+                  <option value="wells-fargo.statement.v1">Wells Fargo statement</option>
+                  <option value="amex.statement.v1">Amex statement</option>
+                  <option value="citi.statement.v1">Citi statement</option>
+                </select>
+              </label>
+              <label>
+                Table density
+                <select id="tableDensity">
+                  <option value="auto">Auto from document type</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+            </div>
+          </details>
+        </section>
+
+        <section id="analysisPanel" class="panel analysis-panel" hidden>
+          <div class="panel-head compact">
+            <div>
+              <p class="panel-label">Preflight analyzer</p>
+              <h2>Detected document profile</h2>
+            </div>
+          </div>
+          <div id="analysisOutput" class="analysis-output"></div>
+        </section>
+
+        <section class="summary-panel">
+          <div class="summary-card">
+            <span>Document</span>
+            <strong id="summaryDoc">Bank statement</strong>
+          </div>
+          <div class="summary-card">
+            <span>Extract</span>
+            <strong id="summaryExtract">Key fields and transaction table</strong>
+          </div>
+          <div class="summary-card">
+            <span>Goal</span>
+            <strong id="summaryGoal">Balanced</strong>
+          </div>
+        </section>
+
+        <section id="resultPanel" class="panel result-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="panel-label">Recommendation</p>
+              <h2>Ranked models</h2>
+            </div>
+          </div>
+          <div id="emptyState" class="empty-state">
+            Upload a document, then V4 will read the PDF/image and recommend models.
+          </div>
+          <div id="recommendationOutput" class="recommendation-output"></div>
+        </section>
+      </section>
+    </main>
+    <script src="./v4.js"></script>
+  </body>
+</html>

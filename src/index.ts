@@ -13,6 +13,7 @@ import { recordOutcome } from "./services/routingEngine.js";
 import { getUserOnboardingProfile, saveUserOnboardingProfile } from "./services/userProfileStore.js";
 import { resolveUserId } from "./services/authService.js";
 import { updateDocumentIntelligenceFeedback } from "./services/documentIntelligence.js";
+import { analyzeDocumentPreflightV4 } from "./services/v4PreflightAnalyzer.js";
 
 const version = "1.0.0";
 
@@ -63,7 +64,7 @@ export function createHttpApp() {
   });
   app.use((req, res, next) => {
     const expected = process.env.ROUTER_API_KEY;
-    if (!expected || req.path === "/health" || req.path.startsWith("/api/v2/")) return next();
+    if (!expected || req.path === "/health" || req.path.startsWith("/api/v2/") || req.path.startsWith("/api/v4/")) return next();
     const bearer = req.header("authorization")?.replace(/^Bearer\s+/i, "");
     const headerKey = req.header("x-router-api-key");
     if (bearer === expected || headerKey === expected) return next();
@@ -182,6 +183,24 @@ export function createHttpApp() {
           mimeType: req.file.mimetype,
           size: req.file.size,
         },
+      });
+      return res.json(result);
+    } catch (error) {
+      return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/v4/analyze", upload.single("document"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "document file is required" });
+      const result = await analyzeDocumentPreflightV4({
+        path: req.file.path,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      }, {
+        documentType: optionalString(req.body?.document_type),
+        extractionPreset: optionalString(req.body?.extraction_preset),
       });
       return res.json(result);
     } catch (error) {
