@@ -343,7 +343,11 @@ function buildExplanation(row, index, rows) {
   const weightedCost = row.cost_score * weights.cost;
   const weightedLatency = row.latency_score * weights.latency;
   const documentFitScore = row.document_fit_score || row.documentFitScore || 0;
-  const baseScore = weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0) + documentFitScore;
+  const isCostGoal = $("strategy").value === "cost";
+  const safetyAdjustment = Math.max(-0.04, Math.min(0.03, documentFitScore));
+  const baseScore = isCostGoal
+    ? row.cost_score * 0.82 + row.quality_score * 0.12 + row.latency_score * 0.06 + safetyAdjustment
+    : weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0) + documentFitScore;
   const leader = rows[0];
   const costDelta = leader && leader !== row ? row.estimated_cost_usd - leader.estimated_cost_usd : 0;
   const qualityDelta = leader && leader !== row ? row.quality_score - leader.quality_score : 0;
@@ -372,16 +376,28 @@ function buildExplanation(row, index, rows) {
     </div>
     <div class="explain-section">
       <h4>Routing score</h4>
-      <p>The ${escapeHtml($("strategy").selectedOptions[0]?.textContent || "Balanced")} goal weights quality ${percent(weights.quality)}, cost ${percent(weights.cost)}, and speed ${percent(weights.latency)}.</p>
+      <p>${escapeHtml(scoreIntroText(isCostGoal, weights))}</p>
       <div class="score-breakdown">
-        ${scoreRow("Quality", row.quality_score, weights.quality, weightedQuality)}
-        ${scoreRow("Cost", row.cost_score, weights.cost, weightedCost)}
-        ${scoreRow("Speed", row.latency_score, weights.latency, weightedLatency)}
+        ${isCostGoal ? scoreRow("Cost", row.cost_score, 0.82, row.cost_score * 0.82) : scoreRow("Quality", row.quality_score, weights.quality, weightedQuality)}
+        ${isCostGoal ? scoreRow("Quality safety", row.quality_score, 0.12, row.quality_score * 0.12) : scoreRow("Cost", row.cost_score, weights.cost, weightedCost)}
+        ${isCostGoal ? scoreRow("Speed", row.latency_score, 0.06, row.latency_score * 0.06) : scoreRow("Speed", row.latency_score, weights.latency, weightedLatency)}
       </div>
-      <p class="formula">Base score = ${weightedQuality.toFixed(3)} + ${weightedCost.toFixed(3)} + ${weightedLatency.toFixed(3)}${(row.tierBonus || row.tier_bonus) ? ` + ${(row.tierBonus || row.tier_bonus).toFixed(3)} tier bonus` : ""}${documentFitScore ? ` + ${documentFitScore.toFixed(3)} document fit` : ""} = ${baseScore.toFixed(3)}</p>
+      <p class="formula">${scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, documentFitScore, safetyAdjustment, baseScore)}</p>
       <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the weighted score is lower after cost and speed are included.` : ""}</p>
     </div>
   `;
+}
+
+function scoreIntroText(isCostGoal, weights) {
+  if (isCostGoal) return "Lowest cost uses a cost-first formula: log-scaled cost 82%, quality safety 12%, speed 6%. Document fit is tightly capped so it cannot overpower price.";
+  return `The ${$("strategy").selectedOptions[0]?.textContent || "Balanced"} goal weights quality ${percent(weights.quality)}, cost ${percent(weights.cost)}, and speed ${percent(weights.latency)}.`;
+}
+
+function scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, documentFitScore, safetyAdjustment, baseScore) {
+  if (isCostGoal) {
+    return `Cost-first score = ${(row.cost_score * 0.82).toFixed(3)} + ${(row.quality_score * 0.12).toFixed(3)} + ${(row.latency_score * 0.06).toFixed(3)}${safetyAdjustment ? ` + ${safetyAdjustment.toFixed(3)} capped safety` : ""} = ${baseScore.toFixed(3)}`;
+  }
+  return `Base score = ${weightedQuality.toFixed(3)} + ${weightedCost.toFixed(3)} + ${weightedLatency.toFixed(3)}${(row.tierBonus || row.tier_bonus) ? ` + ${(row.tierBonus || row.tier_bonus).toFixed(3)} tier bonus` : ""}${documentFitScore ? ` + ${documentFitScore.toFixed(3)} document fit` : ""} = ${baseScore.toFixed(3)}`;
 }
 
 function renderTradeoffChart(rows) {
@@ -513,7 +529,6 @@ function strategyWeightsClient(strategy, profile = buildDocumentProfile(), diffi
     || profile.requires_reconciliation;
   if (strategy === "balanced" && isHardFinancial) return normalizeClientWeights({ quality: base.quality + 0.18, cost: base.cost - 0.12, latency: base.latency - 0.06 });
   if (strategy === "balanced" && ["invoice_extraction", "field_extraction"].includes(taskType) && isSimple) return normalizeClientWeights({ quality: base.quality - 0.12, cost: base.cost + 0.08, latency: base.latency + 0.04 });
-  if (strategy === "cost" && isHardFinancial) return normalizeClientWeights({ quality: base.quality + 0.16, cost: base.cost - 0.12, latency: base.latency - 0.04 });
   return base;
 }
 

@@ -118,20 +118,25 @@ export function scoreModels(
   documentDifficulty?: ReturnType<typeof evaluateDocumentDifficulty>,
 ): ModelScore[] {
   const weights = adjustedStrategyWeights(policy.strategy || "balanced", taskType, documentProfile, documentDifficulty);
-  const maxCost = Math.max(...models.map((model) => costFor(model, inputTokens, outputTokens)));
+  const modelCosts = models.map((model) => costFor(model, inputTokens, outputTokens));
+  const minCost = Math.min(...modelCosts);
+  const maxCost = Math.max(...modelCosts);
   const maxLatency = Math.max(...models.map((model) => model.avgLatencyMs));
 
   return models.map((model) => {
     const filteredReason = filterReason(model, policy);
     const estimatedCostUsd = costFor(model, inputTokens, outputTokens);
     const documentFit = documentFitForModel(model, taskType, documentProfile, documentDifficulty);
-    const costScore = clampScore(1 - estimatedCostUsd / maxCost + documentFit.costDelta);
+    const rawCostScore = costScoreFor(estimatedCostUsd, minCost, maxCost);
+    const costScore = policy.strategy === "cost" ? rawCostScore : clampScore(rawCostScore + documentFit.costDelta);
     const qualityScore = clampScore(model.qualityScore / 100 + documentFit.qualityDelta);
     const latencyScore = clampScore(1 - model.avgLatencyMs / maxLatency + documentFit.latencyDelta);
     const tierBonus = preferredTiers.includes(model.tier) ? 0.12 - preferredTiers.indexOf(model.tier) * 0.03 : 0;
     const learned = modelTaskScoreStore.get(scoreKey(model.id, taskType));
     const learnedBlend = learned ? learnedBlendWeight(learned.sampleCount) : 0;
-    const staticScore = costScore * weights.cost + qualityScore * weights.quality + latencyScore * weights.latency + tierBonus + documentFit.scoreDelta;
+    const staticScore = policy.strategy === "cost"
+      ? costFirstScore(costScore, qualityScore, latencyScore, documentFit.scoreDelta)
+      : costScore * weights.cost + qualityScore * weights.quality + latencyScore * weights.latency + tierBonus + documentFit.scoreDelta;
     const learnedScore = learned?.learnedScore ?? staticScore;
     const score = filteredReason
       ? -1
@@ -153,6 +158,19 @@ export function scoreModels(
       filteredReason,
     };
   });
+}
+
+function costScoreFor(cost: number, minCost: number, maxCost: number) {
+  if (maxCost <= minCost) return 1;
+  const safeCost = Math.max(cost, 0.0000001);
+  const safeMin = Math.max(minCost, 0.0000001);
+  const safeMax = Math.max(maxCost, safeMin + 0.0000001);
+  return 1 - Math.log(safeCost / safeMin) / Math.log(safeMax / safeMin);
+}
+
+function costFirstScore(costScore: number, qualityScore: number, latencyScore: number, documentFitScore: number) {
+  const safetyAdjustment = Math.max(-0.04, Math.min(0.03, documentFitScore));
+  return costScore * 0.82 + qualityScore * 0.12 + latencyScore * 0.06 + safetyAdjustment;
 }
 
 export function estimateCost(prompt: string, estimatedOutputTokens = 300) {
@@ -312,9 +330,6 @@ function adjustedStrategyWeights(
   }
   if (strategy === "balanced" && (taskType === "invoice_extraction" || taskType === "field_extraction") && isSimple) {
     return normalizeWeights({ quality: base.quality - 0.12, cost: base.cost + 0.08, latency: base.latency + 0.04 });
-  }
-  if (strategy === "cost" && isHardFinancial) {
-    return normalizeWeights({ quality: base.quality + 0.16, cost: base.cost - 0.12, latency: base.latency - 0.04 });
   }
   return base;
 }
