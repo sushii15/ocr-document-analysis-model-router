@@ -36,22 +36,42 @@ export async function runNonLlmOcr(file: UploadedDocument): Promise<OcrResult> {
 
 async function extractPdfText(file: UploadedDocument): Promise<OcrResult> {
   const buffer = await fs.readFile(file.path);
-  const parsed = await pdfParse(buffer);
-  const text = normalizeText(parsed.text || "");
-  const pageCount = parsed.numpages || undefined;
-  const hasText = text.length > 80;
-  return {
-    text,
-    engine: hasText ? "pdf_text_layer" : "none",
-    warnings: hasText ? [] : ["PDF text layer is missing or too sparse; scanned PDF image OCR is not configured in this local build."],
-    profilePatch: {
-      file_type: "pdf",
-      page_count: pageCount,
-      character_count: text.length,
-      has_text_layer: hasText,
-      text_layer_quality: hasText ? (text.length / Math.max(1, pageCount || 1) > 500 ? "good" : "partial") : "none",
-    },
-  };
+  try {
+    const parsed = await pdfParse(buffer);
+    const text = normalizeText(parsed.text || "");
+    const pageCount = parsed.numpages || estimatePdfPages(file.size);
+    const hasText = text.length > 80;
+    return {
+      text,
+      engine: hasText ? "pdf_text_layer" : "none",
+      warnings: hasText ? [] : ["PDF text layer is missing or too sparse; scanned PDF image OCR is not configured in this local build."],
+      profilePatch: {
+        file_type: "pdf",
+        page_count: pageCount,
+        character_count: text.length,
+        has_text_layer: hasText,
+        text_layer_quality: hasText ? (text.length / Math.max(1, pageCount || 1) > 500 ? "good" : "partial") : "none",
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const pageCount = estimatePdfPages(file.size);
+    return {
+      text: "",
+      engine: "none",
+      warnings: [
+        `PDF text-layer parser could not read this file (${message}). The router will continue using file metadata and sparse-PDF signals.`,
+      ],
+      profilePatch: {
+        file_type: "pdf",
+        page_count: pageCount,
+        character_count: 0,
+        has_text_layer: false,
+        text_layer_quality: "none",
+        image_quality: "unknown",
+      },
+    };
+  }
 }
 
 async function extractImageText(file: UploadedDocument): Promise<OcrResult> {
@@ -96,4 +116,11 @@ function tesseractCommand() {
 
 function normalizeText(text: string) {
   return text.replace(/\r/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function estimatePdfPages(size: number) {
+  if (size > 4_000_000) return 24;
+  if (size > 1_500_000) return 12;
+  if (size > 600_000) return 6;
+  return 2;
 }
