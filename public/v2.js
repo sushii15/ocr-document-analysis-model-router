@@ -146,11 +146,58 @@ function updateFileMeta() {
     return;
   }
   $("fileMeta").textContent = `${file.name} | ${(file.size / 1024).toFixed(1)} KB | ${file.type || "unknown type"}`;
+  applyFileNameHints(file);
   if (file.type.startsWith("image/")) {
     $("pageCount").value = 1;
     $("textLayer").value = "none";
   }
+  if (file.name.toLowerCase().endsWith(".pdf") && Number($("pageCount").value || 0) <= 1) {
+    $("pageCount").value = estimatePdfPagesFromSize(file.size);
+  }
   updateSummary();
+}
+
+function applyFileNameHints(file) {
+  const name = file.name.toLowerCase();
+  const docTypeHint = [
+    [/bank|statement|transaction|checking|savings|chase|bofa|bank.of.america|wells|amex|citi/, "bank_statement"],
+    [/invoice|bill|po-|purchase.order/, "invoice"],
+    [/receipt|expense/, "receipt"],
+    [/tax|w-?2|1099|return/, "tax_form"],
+    [/loan|mortgage|credit.agreement/, "loan_document"],
+    [/report|financial|annual|quarterly|statement.of.cash|balance.sheet/, "financial_report"],
+  ].find(([regex]) => regex.test(name));
+  if (docTypeHint && $("docType").value !== docTypeHint[1]) {
+    $("docType").value = docTypeHint[1];
+    updatePresetOptions();
+    applyDocumentDefaults();
+  }
+
+  const institutionHint = [
+    [/chase|jpmorgan/, "chase.statement.v1"],
+    [/bofa|bank.of.america|bank-of-america/, "bank-of-america.statement.v1"],
+    [/wells|wells.fargo|wells-fargo/, "wells-fargo.statement.v1"],
+    [/amex|american.express/, "amex.statement.v1"],
+    [/citi|citibank/, "citi.statement.v1"],
+  ].find(([regex]) => regex.test(name));
+  if (institutionHint) $("institutionProfile").value = institutionHint[1];
+
+  if (/transaction|statement|report|ledger|table|line.item/.test(name)) $("tableDensity").value = "high";
+  if (/simple|clean|single.page|receipt/.test(name)) {
+    $("layoutComplexity").value = "simple";
+    $("tableDensity").value = "low";
+  }
+  if (/scan|scanned|image|photo|jpg|png|low.quality|blur/.test(name)) {
+    $("textLayer").value = "none";
+    $("imageQuality").value = /low.quality|blur/.test(name) ? "low" : "medium";
+  }
+}
+
+function estimatePdfPagesFromSize(size) {
+  if (size > 4_000_000) return 24;
+  if (size > 1_500_000) return 12;
+  if (size > 600_000) return 6;
+  return 2;
 }
 
 function applyDocumentDefaults() {
@@ -291,7 +338,7 @@ function buildExplanation(row, index, rows) {
   const outputTokens = state.decision?.estimated_output_tokens || state.decision?.estimatedOutputTokens || estimateOutputTokens(profile, buildInstruction());
   const inputPrice = row.cost_per_1k_input_tokens ?? 0;
   const outputPrice = row.cost_per_1k_output_tokens ?? 0;
-  const weights = strategyWeightsClient($("strategy").value);
+  const weights = strategyWeightsClient($("strategy").value, profile, difficulty);
   const weightedQuality = row.quality_score * weights.quality;
   const weightedCost = row.cost_score * weights.cost;
   const weightedLatency = row.latency_score * weights.latency;
@@ -452,13 +499,30 @@ function scoreRow(label, score, weight, contribution) {
   `;
 }
 
-function strategyWeightsClient(strategy) {
-  return {
+function strategyWeightsClient(strategy, profile = buildDocumentProfile(), difficulty = {}) {
+  const base = {
     cost: { cost: 0.7, quality: 0.2, latency: 0.1 },
     quality: { cost: 0.1, quality: 0.75, latency: 0.15 },
     latency: { cost: 0.15, quality: 0.2, latency: 0.65 },
     balanced: { cost: 0.35, quality: 0.45, latency: 0.2 },
   }[strategy] || { cost: 0.35, quality: 0.45, latency: 0.2 };
+  const taskType = taskTypeFromProfile(profile);
+  const isSimple = (difficulty.complexity || difficulty.level) === "low" && profile.text_layer_quality === "good" && profile.layout_complexity === "simple";
+  const isHardFinancial = ["bank_statement_extraction", "reconciliation", "long_document_extraction"].includes(taskType)
+    || (difficulty.complexity || difficulty.level) === "high"
+    || profile.requires_reconciliation;
+  if (strategy === "balanced" && isHardFinancial) return normalizeClientWeights({ quality: base.quality + 0.18, cost: base.cost - 0.12, latency: base.latency - 0.06 });
+  if (strategy === "balanced" && ["invoice_extraction", "field_extraction"].includes(taskType) && isSimple) return normalizeClientWeights({ quality: base.quality - 0.12, cost: base.cost + 0.08, latency: base.latency + 0.04 });
+  if (strategy === "cost" && isHardFinancial) return normalizeClientWeights({ quality: base.quality + 0.16, cost: base.cost - 0.12, latency: base.latency - 0.04 });
+  return base;
+}
+
+function normalizeClientWeights(weights) {
+  const cost = Math.max(0.05, weights.cost);
+  const quality = Math.max(0.05, weights.quality);
+  const latency = Math.max(0.05, weights.latency);
+  const total = cost + quality + latency;
+  return { cost: cost / total, quality: quality / total, latency: latency / total };
 }
 
 function buildDocumentProfile() {

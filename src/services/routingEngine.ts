@@ -117,7 +117,7 @@ export function scoreModels(
   documentProfile?: RouteRequest["document_profile"],
   documentDifficulty?: ReturnType<typeof evaluateDocumentDifficulty>,
 ): ModelScore[] {
-  const weights = strategyWeights(policy.strategy || "balanced");
+  const weights = adjustedStrategyWeights(policy.strategy || "balanced", taskType, documentProfile, documentDifficulty);
   const maxCost = Math.max(...models.map((model) => costFor(model, inputTokens, outputTokens)));
   const maxLatency = Math.max(...models.map((model) => model.avgLatencyMs));
 
@@ -295,6 +295,38 @@ function strategyWeights(strategy: RoutingStrategy) {
   }[strategy];
 }
 
+function adjustedStrategyWeights(
+  strategy: RoutingStrategy,
+  taskType: TaskType,
+  profile?: RouteRequest["document_profile"],
+  difficulty?: ReturnType<typeof evaluateDocumentDifficulty>,
+) {
+  const base = { ...strategyWeights(strategy) };
+  const isSimple = difficulty?.complexity === "low" && profile?.text_layer_quality === "good" && profile?.layout_complexity === "simple";
+  const isHardFinancial = ["bank_statement_extraction", "reconciliation", "long_document_extraction"].includes(taskType)
+    || difficulty?.complexity === "high"
+    || Boolean(profile?.requires_reconciliation);
+
+  if (strategy === "balanced" && isHardFinancial) {
+    return normalizeWeights({ quality: base.quality + 0.18, cost: base.cost - 0.12, latency: base.latency - 0.06 });
+  }
+  if (strategy === "balanced" && (taskType === "invoice_extraction" || taskType === "field_extraction") && isSimple) {
+    return normalizeWeights({ quality: base.quality - 0.12, cost: base.cost + 0.08, latency: base.latency + 0.04 });
+  }
+  if (strategy === "cost" && isHardFinancial) {
+    return normalizeWeights({ quality: base.quality + 0.16, cost: base.cost - 0.12, latency: base.latency - 0.04 });
+  }
+  return base;
+}
+
+function normalizeWeights(weights: { cost: number; quality: number; latency: number }) {
+  const cost = Math.max(0.05, weights.cost);
+  const quality = Math.max(0.05, weights.quality);
+  const latency = Math.max(0.05, weights.latency);
+  const total = cost + quality + latency;
+  return { cost: cost / total, quality: quality / total, latency: latency / total };
+}
+
 function documentFitForModel(
   model: ModelSpec,
   taskType: TaskType,
@@ -313,6 +345,8 @@ function documentFitForModel(
   const isLong = (profile?.page_count || 0) >= 15 || taskType === "long_document_extraction";
   const isCleanSimple = profile?.text_layer_quality === "good" && profile?.image_quality === "high" && ["simple", "mixed"].includes(profile?.layout_complexity || "");
   const modelStrength = tierRank[model.tier];
+
+  applyTaskAffinity();
 
   if (isVisionRequired) {
     if (model.supportsVision) add(0.08, 0, 0, 0.02, "vision OCR required");
@@ -375,6 +409,89 @@ function documentFitForModel(
     costDelta += c;
     scoreDelta += s;
     if (!reasons.includes(reason)) reasons.push(reason);
+  }
+
+  function applyTaskAffinity() {
+    const affinities: Record<string, Partial<Record<TaskType | "receipt_extraction" | "simple_invoice" | "complex_invoice" | "scanned_ocr", number>>> = {
+      "gemini-2.0-flash": {
+        receipt_extraction: 0.22,
+        simple_invoice: 0.16,
+        scanned_ocr: 0.15,
+        invoice_extraction: 0.07,
+        bank_statement_extraction: -0.1,
+        long_document_extraction: -0.06,
+        reconciliation: -0.08,
+      },
+      "mistral-small-3.1": {
+        receipt_extraction: 0.2,
+        simple_invoice: 0.18,
+        invoice_extraction: 0.1,
+        field_extraction: 0.12,
+        scanned_ocr: 0.04,
+        bank_statement_extraction: -0.09,
+        long_document_extraction: -0.08,
+        reconciliation: -0.08,
+      },
+      "gpt-4o-mini": {
+        receipt_extraction: 0.18,
+        simple_invoice: 0.15,
+        invoice_extraction: 0.09,
+        field_extraction: 0.11,
+        scanned_ocr: 0.12,
+        bank_statement_extraction: -0.07,
+      },
+      "claude-haiku-4-5": {
+        receipt_extraction: 0.11,
+        simple_invoice: 0.1,
+        field_extraction: 0.08,
+        long_document_extraction: 0.04,
+        bank_statement_extraction: -0.04,
+      },
+      "gpt-4o": {
+        scanned_ocr: 0.2,
+        complex_invoice: 0.14,
+        invoice_extraction: 0.08,
+        bank_statement_extraction: 0.14,
+        table_extraction: 0.12,
+        reconciliation: 0.12,
+        long_document_extraction: 0.04,
+      },
+      "claude-sonnet-4-6": {
+        complex_invoice: 0.16,
+        bank_statement_extraction: 0.18,
+        table_extraction: 0.16,
+        reconciliation: 0.2,
+        long_document_extraction: 0.17,
+        validation: 0.18,
+      },
+      "gemini-2.5-pro": {
+        scanned_ocr: 0.18,
+        bank_statement_extraction: 0.23,
+        table_extraction: 0.18,
+        reconciliation: 0.18,
+        long_document_extraction: 0.25,
+        complex_invoice: 0.12,
+      },
+    };
+    const keys = affinityKeys();
+    for (const key of keys) {
+      const delta = affinities[model.id]?.[key];
+      if (delta) {
+        scoreDelta += delta;
+        qualityDelta += delta > 0 ? Math.min(0.08, delta / 3) : Math.max(-0.08, delta / 3);
+        if (delta > 0 && modelStrength <= 1 && ["receipt_extraction", "simple_invoice", "field_extraction"].includes(key)) costDelta += 0.04;
+        reasons.push(`task affinity ${key.replace(/_/g, " ")} ${delta > 0 ? "+" : ""}${delta.toFixed(2)}`);
+      }
+    }
+  }
+
+  function affinityKeys(): Array<TaskType | "receipt_extraction" | "simple_invoice" | "complex_invoice" | "scanned_ocr"> {
+    const keys: Array<TaskType | "receipt_extraction" | "simple_invoice" | "complex_invoice" | "scanned_ocr"> = [taskType];
+    if (profile?.document_type === "receipt") keys.push("receipt_extraction");
+    if (profile?.document_type === "invoice" && isCleanSimple && !hasComplexTables) keys.push("simple_invoice");
+    if (profile?.document_type === "invoice" && (hasComplexTables || difficulty?.complexity === "high")) keys.push("complex_invoice");
+    if (isVisionRequired) keys.push("scanned_ocr");
+    return Array.from(new Set(keys));
   }
 }
 
