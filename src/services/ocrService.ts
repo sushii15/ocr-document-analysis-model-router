@@ -55,20 +55,24 @@ async function extractPdfText(file: UploadedDocument): Promise<OcrResult> {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const pageCount = estimatePdfPages(file.size);
+    const fallback = recoverPdfTextFromContentStream(buffer);
+    const pageCount = fallback.pageCount || estimatePdfPages(file.size);
+    const hasText = fallback.text.length > 40;
     return {
-      text: "",
-      engine: "none",
+      text: fallback.text,
+      engine: hasText ? "pdf_text_layer" : "none",
       warnings: [
-        `PDF text-layer parser could not read this file (${message}). The router will continue using file metadata and sparse-PDF signals.`,
+        hasText
+          ? `PDF text-layer parser could not read this file (${message}); recovered text from raw PDF content streams.`
+          : `PDF text-layer parser could not read this file (${message}). The router will continue using file metadata and sparse-PDF signals.`,
       ],
       profilePatch: {
         file_type: "pdf",
         page_count: pageCount,
-        character_count: 0,
-        has_text_layer: false,
-        text_layer_quality: "none",
-        image_quality: "unknown",
+        character_count: fallback.text.length,
+        has_text_layer: hasText,
+        text_layer_quality: hasText ? (fallback.text.length / Math.max(1, pageCount) > 500 ? "good" : "partial") : "none",
+        image_quality: hasText ? "medium" : "unknown",
       },
     };
   }
@@ -123,4 +127,47 @@ function estimatePdfPages(size: number) {
   if (size > 1_500_000) return 12;
   if (size > 600_000) return 6;
   return 2;
+}
+
+function recoverPdfTextFromContentStream(buffer: Buffer) {
+  const raw = buffer.toString("latin1");
+  const pageCount = Number(raw.match(/\/Count\s+(\d+)/)?.[1] || 0) || undefined;
+  const streamTexts: string[] = [];
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let streamMatch: RegExpExecArray | null;
+  while ((streamMatch = streamRegex.exec(raw))) {
+    streamTexts.push(...extractPdfTextOperators(streamMatch[1]));
+  }
+  if (!streamTexts.length) streamTexts.push(...extractPdfTextOperators(raw));
+  return {
+    text: normalizeText(streamTexts.join("\n")),
+    pageCount,
+  };
+}
+
+function extractPdfTextOperators(source: string) {
+  const texts: string[] = [];
+  const literalBeforeOperator = /\((?:\\.|[^\\)])*\)\s*(?:Tj|'|")/g;
+  const arrayBeforeOperator = /\[((?:\s*\((?:\\.|[^\\)])*\)\s*-?\d*)+)\s*\]\s*TJ/g;
+  let match: RegExpExecArray | null;
+  while ((match = literalBeforeOperator.exec(source))) {
+    const literal = match[0].match(/\((?:\\.|[^\\)])*\)/)?.[0];
+    if (literal) texts.push(decodePdfLiteral(literal));
+  }
+  while ((match = arrayBeforeOperator.exec(source))) {
+    const parts = match[1].match(/\((?:\\.|[^\\)])*\)/g) || [];
+    const line = parts.map(decodePdfLiteral).join("");
+    if (line.trim()) texts.push(line);
+  }
+  return texts;
+}
+
+function decodePdfLiteral(literal: string) {
+  return literal
+    .slice(1, -1)
+    .replace(/\\([nrtbf()\\])/g, (_match, code: string) => {
+      const map: Record<string, string> = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", "(": "(", ")": ")", "\\": "\\" };
+      return map[code] || code;
+    })
+    .replace(/\\([0-7]{1,3})/g, (_match, octal: string) => String.fromCharCode(parseInt(octal, 8)));
 }
