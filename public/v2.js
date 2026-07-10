@@ -72,7 +72,7 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const money = (value) => `$${Number(value || 0).toFixed(value > 0.01 ? 4 : 6)}`;
-const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
+const percent = (value) => `${Math.min(99, Math.max(1, Math.round(Number(value || 0) * 100)))}%`;
 
 init().catch((error) => {
   console.error(error);

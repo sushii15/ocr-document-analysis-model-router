@@ -171,11 +171,11 @@ export function scoreModels(
 }
 
 function costScoreFor(cost: number, minCost: number, maxCost: number) {
-  if (maxCost <= minCost) return 1;
+  if (maxCost <= minCost) return 0.99;
   const safeCost = Math.max(cost, 0.0000001);
   const safeMin = Math.max(minCost, 0.0000001);
   const safeMax = Math.max(maxCost, safeMin + 0.0000001);
-  return 1 - Math.log(safeCost / safeMin) / Math.log(safeMax / safeMin);
+  return clampScore(1 - Math.log(safeCost / safeMin) / Math.log(safeMax / safeMin));
 }
 
 function costFirstScore(costScore: number, qualityScore: number, latencyScore: number, documentFitScore: number) {
@@ -641,7 +641,7 @@ function clamp01(value?: number) {
 }
 
 function clampScore(value: number) {
-  return Math.min(1, Math.max(0, value));
+  return Math.min(0.99, Math.max(0.01, value));
 }
 
 function round4(value: number) {
