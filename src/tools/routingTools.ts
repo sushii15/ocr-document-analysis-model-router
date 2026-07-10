@@ -364,7 +364,7 @@ function formatDecision(decision: ReturnType<typeof route>): Record<string, unkn
     document_profile: decision.documentProfile || null,
     recommended_models: decision.modelScores
       .filter((score) => !score.filteredReason)
-      .slice(0, 8)
+      .slice(0, 20)
       .map((score) => {
         const model = decision.selectedModel.id === score.modelId
           ? decision.selectedModel

@@ -65,16 +65,6 @@ const extractionOptions = {
   ],
 };
 
-const defaultModelIds = [
-  "gpt-4o-mini",
-  "gemini-2.0-flash",
-  "mistral-small-3.1",
-  "claude-haiku-4-5",
-  "gpt-4o",
-  "claude-sonnet-4-6",
-  "gemini-2.5-pro",
-];
-
 const state = {
   models: [],
   decision: null,
@@ -241,7 +231,7 @@ async function recommendModels() {
         strategy: $("strategy").value,
         maxLatencyMs: 3500,
         minQualityScore: 0,
-        allowedModels: defaultModelIds,
+        allowedModels: state.models.map((model) => model.id),
       },
     });
     renderRecommendations();
@@ -255,7 +245,7 @@ async function recommendModels() {
 }
 
 function renderRecommendations() {
-  const rows = normalizeDecisionRows().slice(0, 5);
+  const rows = normalizeDecisionRows().slice(0, 20);
   $("recommendationOutput").innerHTML = `
     ${renderTradeoffChart(rows)}
     ${rows.map((row, index) => `

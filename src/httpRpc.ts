@@ -359,7 +359,7 @@ function formatDecision(decision: ReturnType<typeof route>) {
     document_profile: decision.documentProfile || null,
     recommended_models: decision.modelScores
       .filter((score) => !score.filteredReason)
-      .slice(0, 8)
+      .slice(0, 20)
       .map((score) => {
         const model = listModels().find((candidate) => candidate.id === score.modelId);
         return {
