@@ -217,12 +217,14 @@ function renderRecommendations() {
         <button type="button" class="secondary" data-explain="${index}">Explain</button>
       </div>
       <div class="score-grid">
-        <div><span>Estimated cost</span><strong>${money(row.estimated_cost_usd)}</strong></div>
-        <div><span>Quality fit</span><strong>${percent(row.quality_score)}</strong></div>
-        <div><span>Speed fit</span><strong>${percent(row.latency_score)}</strong></div>
+        ${metricTile("Estimated cost", money(row.estimated_cost_usd), null)}
+        ${metricTile("Quality fit", percent(row.quality_score), row.quality_score)}
+        ${metricTile("Speed fit", percent(row.latency_score), row.latency_score)}
+        ${metricTile("Cost fit", percent(row.cost_score), row.cost_score)}
       </div>
+      ${riskNote(row)}
       <div id="explain-${index}" class="explain-card" hidden>
-        ${buildExplanation(row)}
+        ${buildExplanation(row, index, rows)}
       </div>
     </article>
   `).join("");
@@ -258,14 +260,22 @@ function normalizeDecisionRows() {
 }
 
 function recommendationSentence(row, index) {
-  const preset = selectedPreset();
-  if (index === 0) return `Best match for ${preset.label.toLowerCase()} with the current ${$("strategy").value} goal.`;
-  if (row.quality_score > 0.85) return "A stronger quality option if the document is harder than expected.";
-  if (row.estimated_cost_usd < 0.002) return "A low-cost backup that should work for cleaner layouts.";
-  return "A reasonable fallback if the top model is unavailable.";
+  const profile = buildDocumentProfile();
+  const strongest = strongestMetric(row);
+  const strategy = $("strategy").value;
+  if (index === 0) {
+    if (profile.has_tables && row.quality_score >= 0.85) return "Ranked first because its quality score is strong enough for table-heavy OCR without moving to a much costlier option.";
+    if (strategy === "cost") return "Ranked first because it keeps cost low while staying above the quality needed for this document profile.";
+    if (strategy === "latency") return "Ranked first because it is the fastest strong-enough option for the selected extraction.";
+    return "Ranked first because it has the best weighted score across quality, speed, cost, and document difficulty.";
+  }
+  if (strongest.key === "quality") return "Higher-accuracy fallback for messy scans, dense tables, or cases where precision matters more than cost.";
+  if (strongest.key === "cost") return "Lower-cost alternative for clean documents where the text layer and layout are unlikely to cause extraction errors.";
+  if (strongest.key === "latency") return "Faster fallback when turnaround time matters and the document is not unusually complex.";
+  return "Backup option with a reasonable overall score if the models above are unavailable.";
 }
 
-function buildExplanation(row) {
+function buildExplanation(row, index, rows) {
   const profile = buildDocumentProfile();
   const preset = selectedPreset();
   const difficulty = state.decision?.document_difficulty || state.decision?.documentDifficulty || {};
@@ -273,11 +283,22 @@ function buildExplanation(row) {
   const outputTokens = state.decision?.estimated_output_tokens || state.decision?.estimatedOutputTokens || estimateOutputTokens(profile, buildInstruction());
   const inputPrice = row.cost_per_1k_input_tokens ?? 0;
   const outputPrice = row.cost_per_1k_output_tokens ?? 0;
+  const weights = strategyWeightsClient($("strategy").value);
+  const weightedQuality = row.quality_score * weights.quality;
+  const weightedCost = row.cost_score * weights.cost;
+  const weightedLatency = row.latency_score * weights.latency;
+  const baseScore = weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0);
+  const leader = rows[0];
+  const costDelta = leader && leader !== row ? row.estimated_cost_usd - leader.estimated_cost_usd : 0;
+  const qualityDelta = leader && leader !== row ? row.quality_score - leader.quality_score : 0;
 
   return `
     <div class="explain-section">
       <h4>Why this model</h4>
-      <p>${escapeHtml(row.name)} is ranked here because it balances OCR quality, expected speed, and estimated cost for a ${labelForDocType(profile.document_type).toLowerCase()}.</p>
+      <p>${escapeHtml(contextAwareWhy(row, index, leader, profile, preset))}</p>
+      <ul class="reason-list">
+        ${reasonBullets(row, index, profile).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+      </ul>
     </div>
     <div class="explain-section">
       <h4>Document signals used</h4>
@@ -289,14 +310,111 @@ function buildExplanation(row) {
     </div>
     <div class="explain-section">
       <h4>Cost estimate</h4>
-      <p>Estimated cost is input tokens plus output tokens multiplied by the model prices.</p>
+      <p>Estimated cost is calculated from token volume and the model's listed input/output prices. No AI is used for this explanation.</p>
       <p class="formula">${inputTokens} / 1000 x ${money(inputPrice)} + ${outputTokens} / 1000 x ${money(outputPrice)} = ${money(row.estimated_cost_usd)}</p>
+      ${costDelta > 0 ? `<p>${escapeHtml(row.name)} is ${money(costDelta)} more expensive than the current top recommendation for this request.</p>` : ""}
     </div>
     <div class="explain-section">
       <h4>Routing score</h4>
-      <p>Quality fit ${percent(row.quality_score)}, speed fit ${percent(row.latency_score)}, cost fit ${percent(row.cost_score)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.</p>
+      <p>The ${escapeHtml($("strategy").selectedOptions[0]?.textContent || "Balanced")} goal weights quality ${percent(weights.quality)}, cost ${percent(weights.cost)}, and speed ${percent(weights.latency)}.</p>
+      <div class="score-breakdown">
+        ${scoreRow("Quality", row.quality_score, weights.quality, weightedQuality)}
+        ${scoreRow("Cost", row.cost_score, weights.cost, weightedCost)}
+        ${scoreRow("Speed", row.latency_score, weights.latency, weightedLatency)}
+      </div>
+      <p class="formula">Base score = ${weightedQuality.toFixed(3)} + ${weightedCost.toFixed(3)} + ${weightedLatency.toFixed(3)}${(row.tierBonus || row.tier_bonus) ? ` + ${(row.tierBonus || row.tier_bonus).toFixed(3)} tier bonus` : ""} = ${baseScore.toFixed(3)}</p>
+      <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the weighted score is lower after cost and speed are included.` : ""}</p>
     </div>
   `;
+}
+
+function metricTile(label, value, score) {
+  return `
+    <div class="metric-tile">
+      <span>${label}</span>
+      <strong>${value}</strong>
+      ${score === null ? "" : `<div class="metric-bar" aria-hidden="true"><i style="width:${Math.max(3, Math.round(score * 100))}%"></i></div>`}
+    </div>
+  `;
+}
+
+function riskNote(row) {
+  const profile = buildDocumentProfile();
+  const risks = riskReasons(row, profile);
+  if (!risks.length) return "";
+  return `<div class="risk-note"><strong>Risk</strong><span>${escapeHtml(risks[0])}</span></div>`;
+}
+
+function riskReasons(row, profile) {
+  const risks = [];
+  const difficultTables = profile.has_tables && ["table_heavy", "dense", "multi_column"].includes(profile.layout_complexity);
+  if (difficultTables && row.quality_score < 0.82) risks.push("May struggle with dense tables or row-level reconciliation.");
+  if (profile.text_layer_quality === "none" && row.quality_score < 0.86) risks.push("No text layer means the model must rely on vision OCR; accuracy risk is higher.");
+  if (profile.page_count > 12 && row.latency_score < 0.45) risks.push("Longer documents may be slower on this model.");
+  if (profile.image_quality === "low" && row.quality_score < 0.88) risks.push("Low image quality raises the chance of missed fields or wrong totals.");
+  return risks;
+}
+
+function contextAwareWhy(row, index, leader, profile, preset) {
+  const strongest = strongestMetric(row);
+  const rankText = index === 0 ? "It is ranked first" : `It is ranked #${index + 1}`;
+  const documentNeed = profile.has_tables
+    ? `${labelForDocType(profile.document_type).toLowerCase()} with table extraction`
+    : `${labelForDocType(profile.document_type).toLowerCase()} field extraction`;
+
+  if (index === 0) {
+    return `${rankText} because its weighted score is the strongest fit for ${documentNeed}: ${percent(row.quality_score)} quality, ${percent(row.latency_score)} speed, and ${percent(row.cost_score)} cost fit for "${preset.label}".`;
+  }
+  if (strongest.key === "quality") {
+    return `${rankText} because it improves accuracy headroom for harder OCR, but its total score falls behind ${leader?.name || "the top model"} after cost and speed are weighted.`;
+  }
+  if (strongest.key === "cost") {
+    return `${rankText} because it is economically efficient, but it is safer for clean layouts than for complex financial tables.`;
+  }
+  if (strongest.key === "latency") {
+    return `${rankText} because it is strong on response time, but it is not the best overall fit once document complexity and extraction quality are included.`;
+  }
+  return `${rankText} because it remains a viable fallback, but another model has a stronger weighted combination for this document.`;
+}
+
+function reasonBullets(row, index, profile) {
+  const bullets = [];
+  const strongest = strongestMetric(row);
+  bullets.push(`Strongest dimension: ${strongest.label} at ${percent(strongest.value)}.`);
+  if (profile.has_tables) bullets.push(`Table signal is active, so quality is weighted heavily for row and total accuracy.`);
+  if (profile.requires_reconciliation) bullets.push("Reconciliation is required, so models with stronger reasoning/structure handling move up.");
+  if (profile.text_layer_quality === "good") bullets.push("Good text layer reduces OCR risk, so cheaper models can remain competitive.");
+  if (profile.text_layer_quality === "none") bullets.push("No text layer increases reliance on vision OCR, pushing quality-oriented models higher.");
+  if (index > 0) bullets.push("It stays below the top option because the combined weighted score is lower.");
+  return bullets.slice(0, 4);
+}
+
+function strongestMetric(row) {
+  const metrics = [
+    { key: "quality", label: "Quality fit", value: Number(row.quality_score || 0) },
+    { key: "cost", label: "Cost fit", value: Number(row.cost_score || 0) },
+    { key: "latency", label: "Speed fit", value: Number(row.latency_score || 0) },
+  ];
+  return metrics.sort((a, b) => b.value - a.value)[0];
+}
+
+function scoreRow(label, score, weight, contribution) {
+  return `
+    <div>
+      <span>${label}</span>
+      <strong>${percent(score)} x ${percent(weight)} = ${contribution.toFixed(3)}</strong>
+      <div class="metric-bar" aria-hidden="true"><i style="width:${Math.max(3, Math.round(score * 100))}%"></i></div>
+    </div>
+  `;
+}
+
+function strategyWeightsClient(strategy) {
+  return {
+    cost: { cost: 0.7, quality: 0.2, latency: 0.1 },
+    quality: { cost: 0.1, quality: 0.75, latency: 0.15 },
+    latency: { cost: 0.15, quality: 0.2, latency: 0.65 },
+    balanced: { cost: 0.35, quality: 0.45, latency: 0.2 },
+  }[strategy] || { cost: 0.35, quality: 0.45, latency: 0.2 };
 }
 
 function buildDocumentProfile() {
