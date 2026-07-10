@@ -4,6 +4,7 @@ import { executeRequest } from "../services/executionEngine.js";
 import { listModels } from "../services/modelCatalog.js";
 import { estimateCost, getLearnedScores, getStats, getTrajectory, recordOutcome, route } from "../services/routingEngine.js";
 import { routeV3 } from "../services/routingEngineV3.js";
+import { routeV4 } from "../services/routingEngineV4.js";
 import { evaluateExtraction, logV2Event } from "../services/v2Learning.js";
 import { ModelProvider, ModelSpec, ModelTier, RoutingPolicy, TaskType } from "../types.js";
 
@@ -122,6 +123,37 @@ export function registerRoutingTools(server: McpServer) {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (params) => respond(() => formatDecision(routeV3({
+      prompt: params.prompt,
+      task_type: params.task_type as TaskType | undefined,
+      step_type: params.step_type,
+      trajectory_id: params.trajectory_id,
+      agent_id: params.agent_id,
+      estimated_input_tokens: params.estimated_input_tokens,
+      estimated_output_tokens: params.estimated_output_tokens,
+      document_profile: params.document_profile,
+      policy: params.policy as RoutingPolicy | undefined,
+    }))),
+  );
+
+  server.registerTool(
+    "router_route_request_v4",
+    {
+      title: "Route LLM request V4",
+      description: "V4 OCR/document router with preflight document profile plus benchmark-backed priors from MMR-Bench, MMDocBench, and CC-OCR V2.",
+      inputSchema: {
+        prompt: z.string().min(1).max(100000),
+        task_type: TaskTypeSchema.optional(),
+        step_type: z.string().optional(),
+        trajectory_id: z.string().optional(),
+        agent_id: z.string().optional(),
+        estimated_input_tokens: z.number().int().positive().optional(),
+        estimated_output_tokens: z.number().int().positive().optional(),
+        document_profile: DocumentProfileSchema.optional(),
+        policy: RoutingPolicySchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async (params) => respond(() => formatDecision(routeV4({
       prompt: params.prompt,
       task_type: params.task_type as TaskType | undefined,
       step_type: params.step_type,
@@ -424,6 +456,11 @@ function formatDecision(decision: ReturnType<typeof route>): Record<string, unkn
           raw_document_fit_score: Math.round((score.rawDocumentFitScore || 0) * 10000) / 10000,
           document_fit_reasons: score.documentFitReasons || [],
           tier_bonus: Math.round((score.tierBonus || 0) * 10000) / 10000,
+          benchmark_prior_score: Math.round((score.benchmarkPriorScore || 0) * 10000) / 10000,
+          benchmark_prior_confidence: Math.round((score.benchmarkPriorConfidence || 0) * 10000) / 10000,
+          benchmark_prior_reasons: score.benchmarkPriorReasons || [],
+          benchmark_prior_sources: score.benchmarkPriorSources || [],
+          benchmark_categories: score.benchmarkCategories || [],
         };
       }),
   };

@@ -126,6 +126,11 @@ export interface ModelScore {
   learnedBlend?: number;
   estimatedCostUsd: number;
   filteredReason?: string;
+  benchmarkPriorScore?: number;
+  benchmarkPriorConfidence?: number;
+  benchmarkPriorReasons?: string[];
+  benchmarkPriorSources?: string[];
+  benchmarkCategories?: string[];
 }
 
 export interface RoutingDecision {

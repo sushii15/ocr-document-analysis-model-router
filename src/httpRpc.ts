@@ -2,6 +2,7 @@ import { listModels } from "./services/modelCatalog.js";
 import { executeRequest } from "./services/executionEngine.js";
 import { estimateCost, getLearnedScores, getStats, getTrajectory, recordOutcome, route } from "./services/routingEngine.js";
 import { routeV3 } from "./services/routingEngineV3.js";
+import { routeV4 } from "./services/routingEngineV4.js";
 import { evaluateExtraction, logV2Event } from "./services/v2Learning.js";
 import { ModelProvider, ModelTier, RoutingPolicy, TaskType } from "./types.js";
 
@@ -30,6 +31,26 @@ const toolDefinitions = [
     name: "router_route_request_v3",
     title: "Route document extraction request V3",
     description: "Experimental V3 router with Claude-reviewed scoring separation and server-returned applied weights.",
+    inputSchema: {
+      type: "object",
+      required: ["prompt"],
+      properties: {
+        prompt: { type: "string" },
+        task_type: { type: "string" },
+        step_type: { type: "string" },
+        trajectory_id: { type: "string" },
+        agent_id: { type: "string" },
+        estimated_input_tokens: { type: "number" },
+        estimated_output_tokens: { type: "number" },
+        document_profile: { type: "object" },
+        policy: { type: "object" },
+      },
+    },
+  },
+  {
+    name: "router_route_request_v4",
+    title: "Route document extraction request V4",
+    description: "V4 OCR/document router with preflight document profile plus benchmark-backed priors from MMR-Bench, MMDocBench, and CC-OCR V2.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
@@ -246,6 +267,20 @@ async function runTool(name: string, args: Record<string, any>) {
     }));
   }
 
+  if (name === "router_route_request_v4") {
+    return formatDecision(routeV4({
+      prompt: String(args.prompt || ""),
+      task_type: args.task_type as TaskType | undefined,
+      step_type: args.step_type,
+      trajectory_id: args.trajectory_id,
+      agent_id: args.agent_id,
+      estimated_input_tokens: args.estimated_input_tokens,
+      estimated_output_tokens: args.estimated_output_tokens,
+      document_profile: args.document_profile,
+      policy: args.policy as RoutingPolicy | undefined,
+    }));
+  }
+
   if (name === "router_list_models") {
     const models = listModels({
       tier_filter: args.tier_filter as ModelTier | undefined,
@@ -418,6 +453,11 @@ function formatDecision(decision: ReturnType<typeof route>) {
           raw_document_fit_score: Math.round((score.rawDocumentFitScore || 0) * 10000) / 10000,
           document_fit_reasons: score.documentFitReasons || [],
           tier_bonus: Math.round((score.tierBonus || 0) * 10000) / 10000,
+          benchmark_prior_score: Math.round((score.benchmarkPriorScore || 0) * 10000) / 10000,
+          benchmark_prior_confidence: Math.round((score.benchmarkPriorConfidence || 0) * 10000) / 10000,
+          benchmark_prior_reasons: score.benchmarkPriorReasons || [],
+          benchmark_prior_sources: score.benchmarkPriorSources || [],
+          benchmark_categories: score.benchmarkCategories || [],
         };
       }),
   };

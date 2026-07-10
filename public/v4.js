@@ -77,7 +77,7 @@ const money = (value) => `$${Number(value || 0).toFixed(value > 0.01 ? 4 : 6)}`;
 const percent = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "1%";
-  return `${Math.min(99, Math.max(1, Math.round(numeric * 100)))}%`;
+  return `${Math.min(98, Math.max(2, Math.round(numeric * 100)))}%`;
 };
 
 init().catch((error) => {
@@ -233,7 +233,7 @@ async function recommendModels() {
     $("emptyState").textContent = "Scoring models...";
     const instruction = buildInstruction();
     const taskType = taskTypeFromProfile(profile);
-    state.decision = await mcp("router_route_request_v3", {
+    state.decision = await mcp("router_route_request_v4", {
       prompt: buildPrompt(instruction, profile),
       task_type: taskType,
       document_profile: profile,
@@ -400,6 +400,11 @@ function normalizeDecisionRows() {
       cost_score: row.costScore,
       cost_per_1k_input_tokens: model.cost_per_1k_input_tokens,
       cost_per_1k_output_tokens: model.cost_per_1k_output_tokens,
+      benchmark_prior_score: row.benchmarkPriorScore,
+      benchmark_prior_confidence: row.benchmarkPriorConfidence,
+      benchmark_prior_reasons: row.benchmarkPriorReasons,
+      benchmark_prior_sources: row.benchmarkPriorSources,
+      benchmark_categories: row.benchmarkCategories,
     };
   }).filter((row) => !row.filteredReason);
 }
@@ -458,8 +463,10 @@ function buildExplanation(row, index, rows) {
         <li>${labelForLayout(profile.layout_complexity)} layout and ${profile.has_tables ? "table-heavy extraction" : "field extraction"}.</li>
         <li>Requested output: ${escapeHtml(preset.label)}.</li>
         ${documentFitScore ? `<li>Document-fit quality adjustment: ${documentFitScore > 0 ? "+" : ""}${(documentFitScore * 100).toFixed(1)} points, already reflected in the quality fit.</li>` : ""}
+        ${row.benchmark_categories?.length ? `<li>Benchmark categories: ${escapeHtml(row.benchmark_categories.slice(0, 6).join(", "))}.</li>` : ""}
       </ul>
     </div>
+    ${benchmarkPriorBlock(row)}
     <div class="explain-section">
       <h4>Cost estimate</h4>
       <p>Estimated cost is calculated from token volume and the model's listed input/output prices. Cost fit is based only on relative price within this model list.</p>
@@ -474,6 +481,29 @@ function buildExplanation(row, index, rows) {
       </div>
       <p class="formula">${scoreFormulaText(strategy, row, weightedQuality, weightedCost, weightedLatency, tierBonus, baseScore)}</p>
       <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${strategy === "balanced" && qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the balanced weighted score is lower after cost and speed are included.` : ""}</p>
+    </div>
+  `;
+}
+
+function benchmarkPriorBlock(row) {
+  const reasons = row.benchmark_prior_reasons || [];
+  if (!reasons.length) return "";
+  const sourceLabels = {
+    mmr_bench: "MMR-Bench",
+    mmdocbench: "MMDocBench",
+    cc_ocr_v2: "CC-OCR V2",
+  };
+  const sources = (row.benchmark_prior_sources || []).map((source) => sourceLabels[source] || source);
+  return `
+    <div class="explain-section">
+      <h4>Benchmark prior</h4>
+      <p>V4 applies a deterministic prior from published routing/document OCR benchmarks. It adjusts the quality fit before ranking; no AI is used for this explanation.</p>
+      <ul>
+        <li>Prior adjustment: ${Number(row.benchmark_prior_score || 0) >= 0 ? "+" : ""}${(Number(row.benchmark_prior_score || 0) * 100).toFixed(1)} quality points.</li>
+        <li>Prior confidence: ${percent(row.benchmark_prior_confidence || 0.45)}.</li>
+        ${sources.length ? `<li>Sources used: ${escapeHtml(sources.join(", "))}.</li>` : ""}
+        ${reasons.slice(0, 3).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+      </ul>
     </div>
   `;
 }
@@ -627,6 +657,7 @@ function reasonBullets(row, index, profile) {
   const strategy = $("strategy").value;
   bullets.push(`Strongest dimension: ${strongest.label} at ${percent(strongest.value)}.`);
   fitReasons.slice(0, 2).forEach((reason) => bullets.push(`Rule match: ${reason}.`));
+  (row.benchmark_prior_reasons || []).slice(0, 1).forEach((reason) => bullets.push(`Benchmark prior: ${reason}.`));
   if (profile.has_tables && strategy === "balanced") bullets.push(`Table signal is active, so quality is weighted heavily for row and total accuracy.`);
   if (profile.has_tables && strategy === "quality") bullets.push("Table signal is active, so the quality rank uses the document-adjusted OCR quality fit.");
   if (strategy === "cost") bullets.push("Cost mode ranks by relative estimated price; higher cost fit means lower expected spend.");
