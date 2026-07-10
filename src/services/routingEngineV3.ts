@@ -90,10 +90,8 @@ export function scoreModelsV3(
     const qualityScore = qualityScoreFor(model.qualityScore, documentFit.qualityDelta);
     const latencyScore = clampScore(1 - model.avgLatencyMs / maxLatency + documentFit.latencyDelta);
     const tierBonus = preferredTiers.includes(model.tier) ? 0.08 - preferredTiers.indexOf(model.tier) * 0.04 : 0;
-    const staticScore = policy.strategy === "cost"
-      ? costScore * 0.82 + qualityScore * 0.12 + latencyScore * 0.06 + tierBonus
-      : costScore * appliedWeights.cost + qualityScore * appliedWeights.quality + latencyScore * appliedWeights.latency + tierBonus;
-    const normalizedScore = clampScore(staticScore / STATIC_SCORE_MAX);
+    const staticScore = costScore * appliedWeights.cost + qualityScore * appliedWeights.quality + latencyScore * appliedWeights.latency + tierBonus;
+    const normalizedScore = scoreForStrategy(policy.strategy || "balanced", costScore, qualityScore, latencyScore, staticScore);
 
     return {
       modelId: model.id,
@@ -146,6 +144,13 @@ function compareScores(a: ModelScore, b: ModelScore, strategy: RoutingStrategy) 
   if (strategy === "quality") return b.qualityScore - a.qualityScore || a.estimatedCostUsd - b.estimatedCostUsd;
   if (strategy === "latency") return b.latencyScore - a.latencyScore || a.estimatedCostUsd - b.estimatedCostUsd;
   return a.estimatedCostUsd - b.estimatedCostUsd || b.qualityScore - a.qualityScore || b.latencyScore - a.latencyScore;
+}
+
+function scoreForStrategy(strategy: RoutingStrategy, costScore: number, qualityScore: number, latencyScore: number, staticScore: number) {
+  if (strategy === "quality") return qualityScore;
+  if (strategy === "cost") return costScore;
+  if (strategy === "latency") return latencyScore;
+  return clampScore(staticScore / STATIC_SCORE_MAX);
 }
 
 function normalizePolicy(policy?: RoutingPolicy): RoutingPolicy {

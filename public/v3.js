@@ -305,9 +305,10 @@ function recommendationSentence(row, index) {
   const strongest = strongestMetric(row);
   const strategy = $("strategy").value;
   if (index === 0) {
-    if (profile.has_tables && row.quality_score >= 0.85) return "Ranked first because its quality score is strong enough for table-heavy OCR without moving to a much costlier option.";
+    if (strategy === "quality") return "Ranked first because it has the highest quality fit for the selected document and extraction preset.";
     if (strategy === "cost") return "Ranked first because it keeps cost low while staying above the quality needed for this document profile.";
     if (strategy === "latency") return "Ranked first because it is the fastest strong-enough option for the selected extraction.";
+    if (profile.has_tables && row.quality_score >= 0.85) return "Ranked first because its quality score is strong enough for table-heavy OCR without moving to a much costlier option.";
     return "Ranked first because it has the best weighted score across quality, speed, cost, and document difficulty.";
   }
   if (strongest.key === "quality" && Number(row.quality_score || 0) < 0.995) return "Higher-accuracy fallback for messy scans, dense tables, or cases where precision matters more than cost.";
@@ -330,14 +331,13 @@ function buildExplanation(row, index, rows) {
   const weightedCost = row.cost_score * weights.cost;
   const weightedLatency = row.latency_score * weights.latency;
   const documentFitScore = row.document_fit_score || row.documentFitScore || 0;
-  const isCostGoal = $("strategy").value === "cost";
-  const baseScore = isCostGoal
-    ? row.cost_score * 0.82 + row.quality_score * 0.12 + row.latency_score * 0.06 + (row.tierBonus || row.tier_bonus || 0)
-    : weightedQuality + weightedCost + weightedLatency + (row.tierBonus || row.tier_bonus || 0);
+  const strategy = $("strategy").value;
+  const tierBonus = row.tierBonus || row.tier_bonus || 0;
+  const baseScore = weightedQuality + weightedCost + weightedLatency + tierBonus;
   const leader = rows[0];
-  const tieWinner = rows.some((candidate) => candidate !== row && Number(candidate.score || 0) > Number(row.score || 0) && Number(candidate.score || 0) - Number(row.score || 0) <= 0.01 && Number(row.estimated_cost_usd || Infinity) < Number(candidate.estimated_cost_usd || Infinity));
   const costDelta = leader && leader !== row ? row.estimated_cost_usd - leader.estimated_cost_usd : 0;
   const qualityDelta = leader && leader !== row ? row.quality_score - leader.quality_score : 0;
+  const scoreRows = routingScoreRows(strategy, row, weights, weightedQuality, weightedCost, weightedLatency);
 
   return `
     <div class="explain-section">
@@ -364,28 +364,57 @@ function buildExplanation(row, index, rows) {
     </div>
     <div class="explain-section">
       <h4>Routing score</h4>
-      <p>${escapeHtml(scoreIntroText(isCostGoal, weights))}</p>
+      <p>${escapeHtml(scoreIntroText(strategy, weights))}</p>
       <div class="score-breakdown">
-        ${isCostGoal ? scoreRow("Cost", row.cost_score, 0.82, row.cost_score * 0.82) : scoreRow("Quality", row.quality_score, weights.quality, weightedQuality)}
-        ${isCostGoal ? scoreRow("Quality safety", row.quality_score, 0.12, row.quality_score * 0.12) : scoreRow("Cost", row.cost_score, weights.cost, weightedCost)}
-        ${isCostGoal ? scoreRow("Speed", row.latency_score, 0.06, row.latency_score * 0.06) : scoreRow("Speed", row.latency_score, weights.latency, weightedLatency)}
+        ${scoreRows.map((item) => scoreRow(item.label, item.score, item.weight, item.contribution)).join("")}
       </div>
-      <p class="formula">${scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, row.tierBonus || row.tier_bonus || 0, baseScore)}</p>
-      <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${tieWinner ? " Scores within 0.01 are treated as a tie; the cheaper model wins the tie-break." : ""}${qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the weighted score is lower after cost and speed are included.` : ""}</p>
+      <p class="formula">${scoreFormulaText(strategy, row, weightedQuality, weightedCost, weightedLatency, tierBonus, baseScore)}</p>
+      <p>Final router score: ${Number(row.score || 0).toFixed(3)}. Document difficulty: ${escapeHtml(difficulty.complexity || difficulty.level || "medium")}.${strategy === "balanced" && qualityDelta > 0 ? ` This model has ${percent(Math.abs(qualityDelta))} higher quality fit than the top pick, but the balanced weighted score is lower after cost and speed are included.` : ""}</p>
     </div>
   `;
 }
 
-function scoreIntroText(isCostGoal, weights) {
-  if (isCostGoal) return "Lowest cost uses a cost-first formula: log-scaled cost 82%, quality safety 12%, speed 6%, plus a small tier preference. Document-fit signals are already reflected in quality and speed.";
+function scoreIntroText(strategy, weights) {
+  if (strategy === "quality") return "Best quality ranks models by quality fit first. Cost and speed are shown as context and only matter if quality is tied.";
+  if (strategy === "cost") return "Lowest cost ranks models by cost fit first, where a higher cost fit means a lower estimated price. Quality and speed are shown as context.";
+  if (strategy === "latency") return "Fastest ranks models by speed fit first. Quality and cost are shown as context and only matter if speed is tied.";
   return `The ${$("strategy").selectedOptions[0]?.textContent || "Balanced"} goal weights quality ${percent(weights.quality)}, cost ${percent(weights.cost)}, and speed ${percent(weights.latency)}. These weights come from the V3 server response.`;
 }
 
-function scoreFormulaText(isCostGoal, row, weightedQuality, weightedCost, weightedLatency, tierBonus, baseScore) {
-  const tierText = tierBonus ? ` + ${tierBonus.toFixed(3)} tier bonus` : "";
-  if (isCostGoal) {
-    return `Score = ${(row.cost_score * 0.82).toFixed(3)} cost + ${(row.quality_score * 0.12).toFixed(3)} quality + ${(row.latency_score * 0.06).toFixed(3)} speed${tierText} = ${baseScore.toFixed(3)}`;
+function routingScoreRows(strategy, row, weights, weightedQuality, weightedCost, weightedLatency) {
+  if (strategy === "quality") {
+    return [
+      { label: "Quality rank score", score: row.quality_score, weight: 1, contribution: row.quality_score },
+      { label: "Cost context", score: row.cost_score, weight: 0, contribution: 0 },
+      { label: "Speed context", score: row.latency_score, weight: 0, contribution: 0 },
+    ];
   }
+  if (strategy === "cost") {
+    return [
+      { label: "Cost rank score", score: row.cost_score, weight: 1, contribution: row.cost_score },
+      { label: "Quality context", score: row.quality_score, weight: 0, contribution: 0 },
+      { label: "Speed context", score: row.latency_score, weight: 0, contribution: 0 },
+    ];
+  }
+  if (strategy === "latency") {
+    return [
+      { label: "Speed rank score", score: row.latency_score, weight: 1, contribution: row.latency_score },
+      { label: "Quality context", score: row.quality_score, weight: 0, contribution: 0 },
+      { label: "Cost context", score: row.cost_score, weight: 0, contribution: 0 },
+    ];
+  }
+  return [
+    { label: "Quality", score: row.quality_score, weight: weights.quality, contribution: weightedQuality },
+    { label: "Cost", score: row.cost_score, weight: weights.cost, contribution: weightedCost },
+    { label: "Speed", score: row.latency_score, weight: weights.latency, contribution: weightedLatency },
+  ];
+}
+
+function scoreFormulaText(strategy, row, weightedQuality, weightedCost, weightedLatency, tierBonus, baseScore) {
+  const tierText = tierBonus ? ` + ${tierBonus.toFixed(3)} tier bonus` : "";
+  if (strategy === "quality") return `Rank score = ${Number(row.quality_score || 0).toFixed(3)} quality fit`;
+  if (strategy === "cost") return `Rank score = ${Number(row.cost_score || 0).toFixed(3)} cost fit`;
+  if (strategy === "latency") return `Rank score = ${Number(row.latency_score || 0).toFixed(3)} speed fit`;
   return `Score = ${weightedQuality.toFixed(3)} quality + ${weightedCost.toFixed(3)} cost + ${weightedLatency.toFixed(3)} speed${tierText} = ${baseScore.toFixed(3)}`;
 }
 
@@ -451,17 +480,26 @@ function riskReasons(row, profile) {
 
 function contextAwareWhy(row, index, leader, profile, preset, rows = []) {
   const strongest = strongestMetric(row);
+  const strategy = $("strategy").value;
   const rankText = index === 0 ? "It is ranked first" : `It is ranked #${index + 1}`;
   const documentNeed = profile.has_tables
     ? `${labelForDocType(profile.document_type).toLowerCase()} with table extraction`
     : `${labelForDocType(profile.document_type).toLowerCase()} field extraction`;
-  const nearTieHigherScore = rows.find((candidate) => candidate !== row && Number(candidate.score || 0) > Number(row.score || 0) && Number(candidate.score || 0) - Number(row.score || 0) <= 0.01);
 
   if (index === 0) {
-    if (nearTieHigherScore && Number(row.estimated_cost_usd || Infinity) < Number(nearTieHigherScore.estimated_cost_usd || Infinity)) {
-      return `${rankText} because it is within the 0.01 near-tie band of ${nearTieHigherScore.name || "the next model"} and has the lower estimated cost for ${documentNeed}.`;
-    }
+    if (strategy === "quality") return `${rankText} because it has the highest quality fit for ${documentNeed}: ${percent(row.quality_score)} quality for "${preset.label}".`;
+    if (strategy === "cost") return `${rankText} because it has the strongest cost fit for ${documentNeed}: ${percent(row.cost_score)} cost fit at ${money(row.estimated_cost_usd)} estimated cost.`;
+    if (strategy === "latency") return `${rankText} because it has the strongest speed fit for ${documentNeed}: ${percent(row.latency_score)} speed fit.`;
     return `${rankText} because its weighted score is the strongest fit for ${documentNeed}: ${percent(row.quality_score)} quality, ${percent(row.latency_score)} speed, and ${percent(row.cost_score)} cost fit for "${preset.label}".`;
+  }
+  if (strategy === "quality") {
+    return `${rankText} because its quality fit is ${percent(row.quality_score)}, which is below ${leader?.name || "the top model"} at ${percent(leader?.quality_score || 0)}.`;
+  }
+  if (strategy === "cost") {
+    return `${rankText} because its cost fit is ${percent(row.cost_score)}, which is below ${leader?.name || "the top model"} at ${percent(leader?.cost_score || 0)}.`;
+  }
+  if (strategy === "latency") {
+    return `${rankText} because its speed fit is ${percent(row.latency_score)}, which is below ${leader?.name || "the top model"} at ${percent(leader?.latency_score || 0)}.`;
   }
   if (strongest.key === "quality" && Number(row.quality_score || 0) < 0.995) {
     return `${rankText} because it improves accuracy headroom for harder OCR, but its total score falls behind ${leader?.name || "the top model"} after cost and speed are weighted.`;
@@ -482,13 +520,20 @@ function reasonBullets(row, index, profile) {
   const bullets = [];
   const strongest = strongestMetric(row);
   const fitReasons = row.document_fit_reasons || row.documentFitReasons || [];
+  const strategy = $("strategy").value;
   bullets.push(`Strongest dimension: ${strongest.label} at ${percent(strongest.value)}.`);
   fitReasons.slice(0, 2).forEach((reason) => bullets.push(`Rule match: ${reason}.`));
-  if (profile.has_tables) bullets.push(`Table signal is active, so quality is weighted heavily for row and total accuracy.`);
+  if (profile.has_tables && strategy === "balanced") bullets.push(`Table signal is active, so quality is weighted heavily for row and total accuracy.`);
+  if (profile.has_tables && strategy === "quality") bullets.push("Table signal is active, so the quality rank uses the document-adjusted OCR quality fit.");
+  if (strategy === "cost") bullets.push("Cost mode ranks by relative estimated price; higher cost fit means lower expected spend.");
+  if (strategy === "latency") bullets.push("Fastest mode ranks by speed fit; higher speed fit means lower expected latency.");
   if (profile.requires_reconciliation) bullets.push("Reconciliation is required, so models with stronger reasoning/structure handling move up.");
   if (profile.text_layer_quality === "good") bullets.push("Good text layer reduces OCR risk, so cheaper models can remain competitive.");
   if (profile.text_layer_quality === "none") bullets.push("No text layer increases reliance on vision OCR, pushing quality-oriented models higher.");
-  if (index > 0) bullets.push("It stays below the top option because the combined weighted score is lower.");
+  if (index > 0 && strategy === "balanced") bullets.push("It stays below the top option because the combined weighted score is lower.");
+  if (index > 0 && strategy === "quality") bullets.push("It stays below the top option because its quality rank score is lower.");
+  if (index > 0 && strategy === "cost") bullets.push("It stays below the top option because its cost rank score is lower.");
+  if (index > 0 && strategy === "latency") bullets.push("It stays below the top option because its speed rank score is lower.");
   return bullets.slice(0, 4);
 }
 
@@ -502,10 +547,11 @@ function strongestMetric(row) {
 }
 
 function scoreRow(label, score, weight, contribution) {
+  const valueText = weight === 0 ? `${percent(score)} context` : `${percent(score)} x ${percent(weight)} = ${contribution.toFixed(3)}`;
   return `
     <div>
       <span>${label}</span>
-      <strong>${percent(score)} x ${percent(weight)} = ${contribution.toFixed(3)}</strong>
+      <strong>${valueText}</strong>
       <div class="metric-bar" aria-hidden="true"><i style="width:${Math.max(3, Math.round(score * 100))}%"></i></div>
     </div>
   `;
