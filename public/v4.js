@@ -312,7 +312,9 @@ function renderAnalysis() {
       ${analysisTile("Tables", `${profile.has_tables ? "Detected" : "Not detected"} (${Math.round((profile.table_density || 0) * 100)}%)`)}
       ${analysisTile("Visual structure", features.pdfLooksScanned ? "Image-only scan" : "Text/vector PDF")}
       ${analysisTile("OCR engine", ocr.engine || "none")}
+      ${analysisTile("OCR confidence", ocr.confidence ? percent(ocr.confidence) : "n/a")}
       ${analysisTile("Characters read", ocr.character_count || 0)}
+      ${analysisTile("Table rows", ocr.table_row_count ?? "n/a")}
       ${analysisTile("Document type", labelForDocType(profile.document_type || "unknown"))}
     </div>
     <div class="signal-list">
@@ -323,6 +325,7 @@ function renderAnalysis() {
       <summary>OCR/text preview</summary>
       <pre>${escapeHtml(ocr.preview || previewFallbackText(features))}</pre>
     </details>
+    ${renderOcrTableRows(ocr)}
   `;
 }
 
@@ -335,6 +338,18 @@ function previewFallbackText(features) {
     return "No embedded text was available because this PDF appears to be made of full-page scanned images. V4 routed from visual PDF structure: image count, full-page image layers, image resolution, document type, page count, and financial-document rules.";
   }
   return "No text preview available. V4 still routes from file metadata, OCR warnings, and detected sparse-document signals.";
+}
+
+function renderOcrTableRows(ocr) {
+  const pages = Array.isArray(ocr.pages) ? ocr.pages : [];
+  const rows = pages.flatMap((page) => (page.table_rows || []).map((row) => ({ ...row, page: page.page }))).slice(0, 12);
+  if (!rows.length) return "";
+  return `
+    <details class="ocr-preview">
+      <summary>Detected table rows</summary>
+      <pre>${escapeHtml(rows.map((row) => `p${row.page}: ${row.text}`).join("\n"))}</pre>
+    </details>
+  `;
 }
 
 function renderRecommendations() {

@@ -13,6 +13,9 @@ export interface V4PreflightResult {
     line_count: number;
     preview: string;
     warnings: string[];
+    confidence?: number;
+    pages?: unknown[];
+    table_row_count?: number;
   };
   signals: string[];
   file: {
@@ -43,11 +46,16 @@ export async function analyzeDocumentPreflightV4(file: UploadedDocument, hints: 
   const text = ocr.text || "";
   const textFeatures = extractTextFeatures(text);
   const fileFeatures = await extractFileFeatures(file);
+  const paddle = (ocr.metadata?.paddleocr || {}) as { average_confidence?: number; pages?: unknown[]; table_row_count?: number; line_count?: number };
   const inferredDocumentType = normalizeDocumentType(hints.documentType) || inferDocumentType(file.originalName, text);
   const institution = inferInstitution(file.originalName, text);
   const pageCount = ocr.profilePatch.page_count || fileFeatures.pageCount || 1;
   const imageOnlyPdf = Boolean(fileFeatures.pdfLooksScanned && text.length < 80);
-  const tableDensity = estimateTableDensity(textFeatures, inferredDocumentType, imageOnlyPdf);
+  const tableDensity = Math.max(
+    estimateTableDensity(textFeatures, inferredDocumentType, imageOnlyPdf),
+    Number(ocr.profilePatch.table_density || 0),
+    paddle.table_row_count ? 0.72 : 0,
+  );
   const layoutComplexity = inferLayoutComplexity(textFeatures, tableDensity, pageCount, imageOnlyPdf);
   const imageQuality = inferImageQuality(file, ocr.profilePatch.image_quality, textFeatures, pageCount, fileFeatures);
   const hasTables = tableDensity >= 0.22 || ["bank_statement", "invoice", "financial_report"].includes(inferredDocumentType);
@@ -64,7 +72,7 @@ export async function analyzeDocumentPreflightV4(file: UploadedDocument, hints: 
     image_quality: imageQuality,
     layout_complexity: layoutComplexity,
     has_tables: hasTables,
-    table_count: hasTables ? estimateTableCount(pageCount, tableDensity, textFeatures.tableLikeLineCount) : 0,
+    table_count: hasTables ? Math.max(estimateTableCount(pageCount, tableDensity, textFeatures.tableLikeLineCount), Number(ocr.profilePatch.table_count || 0)) : 0,
     table_density: tableDensity,
     has_handwriting: false,
     requires_reconciliation: inferredDocumentType === "bank_statement" || /\breconcile|running balance|opening balance|closing balance\b/i.test(text),
@@ -89,6 +97,9 @@ export async function analyzeDocumentPreflightV4(file: UploadedDocument, hints: 
       line_count: textFeatures.lineCount,
       preview: text.slice(0, 1200),
       warnings,
+      confidence: ocr.metadata?.paddleocr ? paddle.average_confidence : undefined,
+      pages: ocr.metadata?.paddleocr ? paddle.pages : undefined,
+      table_row_count: ocr.metadata?.paddleocr ? paddle.table_row_count : undefined,
     },
     signals,
     file: {
